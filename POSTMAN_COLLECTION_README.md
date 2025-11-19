@@ -38,7 +38,7 @@ This Postman collection contains all APIs for the Thrive App Backend. All APIs u
 ## 🚀 Quick Start
 
 1. **Import Collection**: Import `Thrive_App_APIs.postman_collection.json` into Postman
-2. **Set Base URL**: Update `base_url` variable (default: `http://localhost:3110`)
+2. **Set Base URL**: Update `base_url` variable (default: `http://localhost:3111`)
 3. **Set Auth Token**: Set `auth_token` variable with your JWT token
 4. **Start Testing**: All APIs are ready to use!
 

@@ -12,7 +12,7 @@
 - [x] `.env.example` file created (template for environment variables)
 - [ ] `.env` file created on VPS with production values
 - [ ] All required environment variables set:
-  - `PORT` (default: 3110)
+  - `PORT` (default: 3111)
   - `DB_SERVER` (Azure SQL server)
   - `DB_DATABASE` (database name)
   - `DB_USER` (database username)
@@ -38,7 +38,7 @@
 
 ### ✅ Server Configuration
 - [ ] Node.js 18+ installed on VPS
-- [ ] Port 3110 available (or configured port)
+- [ ] Port 3111 available (or configured port)
 - [ ] Firewall configured (if applicable)
 - [ ] Logs directory created and writable
 
@@ -79,7 +79,7 @@
 
 7. **Verify Deployment**
    ```bash
-   curl http://localhost:3110/health
+   curl http://localhost:3111/health
    pm2 status
    pm2 logs
    ```

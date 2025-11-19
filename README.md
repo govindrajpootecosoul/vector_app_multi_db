@@ -38,7 +38,7 @@ DB_USER=your_username
 DB_PASSWORD=your_password
 MONGODB_URI=your_mongodb_connection_string
 JWT_SECRET=your_jwt_secret
-PORT=3110
+PORT=3111
 ```
 
 ## Database Setup

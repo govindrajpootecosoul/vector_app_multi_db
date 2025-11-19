@@ -52,7 +52,7 @@ Update the `.env` file with production values:
 - DB_PASSWORD: Your SQL password
 - MONGODB_URI: Your MongoDB connection string
 - JWT_SECRET: A secure random string for JWT
-- PORT: Port for the server (default 3110)
+- PORT: Port for the server (default 3111)
 
 ### Deployment Steps
 1. **Choose a hosting platform** (e.g., Heroku, Render, Railway)

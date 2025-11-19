@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3110;
+const PORT = process.env.PORT || 3111;
 
 // Connect to main database (for authentication)
 connectDB()

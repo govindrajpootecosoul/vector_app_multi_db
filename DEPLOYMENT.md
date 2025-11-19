@@ -54,7 +54,7 @@ nano .env
 2. Add the following environment variables (copy from `.env.example` and fill in values):
 
 ```env
-PORT=3110
+PORT=3111
 NODE_ENV=production
 
 # Azure SQL Database Configuration
@@ -141,10 +141,10 @@ If your VPS has a firewall, allow the application port:
 
 ```bash
 # For Ubuntu/Debian with UFW
-sudo ufw allow 3110/tcp
+sudo ufw allow 3111/tcp
 
 # For CentOS/RHEL with firewalld
-sudo firewall-cmd --permanent --add-port=3110/tcp
+sudo firewall-cmd --permanent --add-port=3111/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -152,7 +152,7 @@ sudo firewall-cmd --reload
 
 1. Check if the server is running:
    ```bash
-   curl http://localhost:3110/health
+   curl http://localhost:3111/health
    ```
 
 2. Check PM2 status:
@@ -217,7 +217,7 @@ pm2 show thrive-app-backend
 ### Application won't start
 
 1. Check logs: `pm2 logs`
-2. Check if port is already in use: `lsof -i :3110` or `netstat -tulpn | grep 3110`
+2. Check if port is already in use: `lsof -i :3111` or `netstat -tulpn | grep 3111`
 3. Verify environment variables are set correctly
 4. Check database connection
 
@@ -236,10 +236,10 @@ pm2 show thrive-app-backend
 ### Port already in use
 
 ```bash
-# Find process using port 3110
-lsof -i :3110
+# Find process using port 3111
+lsof -i :3111
 # or
-netstat -tulpn | grep 3110
+netstat -tulpn | grep 3111
 
 # Kill the process (replace PID with actual process ID)
 kill -9 <PID>
@@ -277,7 +277,7 @@ server {
     server_name your-domain.com;
 
     location / {
-        proxy_pass http://localhost:3110;
+        proxy_pass http://localhost:3111;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';

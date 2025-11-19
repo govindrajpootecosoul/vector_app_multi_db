@@ -22,7 +22,7 @@ module.exports = {
       max_memory_restart: '500M', // Restart if memory exceeds 500MB
       env: {
         NODE_ENV: 'production',
-        PORT: 3110
+        PORT: 3111
       },
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',
