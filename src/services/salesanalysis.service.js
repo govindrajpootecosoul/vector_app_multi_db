@@ -1,8 +1,215 @@
-const { getPool } = require('../config/db');
+const { getConnection } = require('../utils/database');
+
+const FILTER_TYPE_SYNONYMS = {
+  currentmonths: 'currentmonth',
+  thismonth: 'currentmonth',
+  prevmonth: 'previousmonth',
+  previousmonth: 'previousmonth',
+  lastmonth: 'previousmonth',
+  currentyear: 'currentyear',
+  year: 'currentyear',
+  thisyear: 'currentyear',
+  yeartodate: 'yeartodate',
+  ytd: 'yeartodate',
+  lastyear: 'lastyear'
+};
+
+const normalizeFilterType = (filterType = 'previousmonth') => {
+  const normalized = typeof filterType === 'string' ? filterType.toLowerCase() : 'previousmonth';
+  return FILTER_TYPE_SYNONYMS[normalized] || normalized || 'previousmonth';
+};
+
+const ensureDatabaseName = (req, res) => {
+  const databaseName = req.user?.databaseName || req.databaseName;
+  if (!databaseName) {
+    res.status(400).json({
+      success: false,
+      error: 'Database name not found in token',
+      message: 'Please ensure your JWT token contains the databaseName field.'
+    });
+    return null;
+  }
+  req.databaseName = databaseName;
+  return databaseName;
+};
+
+const withDatabaseConnection = async (req, res, handler) => {
+  if (!ensureDatabaseName(req, res)) {
+    return;
+  }
+  const pool = await getConnection(req);
+  return handler(req, res, pool);
+};
+
+const getOrderDateRanges = (query) => {
+  const {
+    startMonth,
+    endMonth,
+    filterType = 'previousmonth'
+  } = query;
+  const normalizedFilter = normalizeFilterType(filterType);
+
+  const today = new Date();
+  const currentYear = today.getUTCFullYear();
+  const currentMonth = today.getUTCMonth() + 1; // 1-based month
+
+  let startDateObj;
+  let endDateObj;
+
+  if (startMonth && endMonth) {
+    if (startMonth.length === 7) {
+      startDateObj = new Date(`${startMonth}-01T00:00:00.000Z`);
+      endDateObj = new Date(`${endMonth}-01T00:00:00.000Z`);
+      endDateObj.setUTCMonth(endDateObj.getUTCMonth() + 1, 0);
+    } else {
+      startDateObj = new Date(`${startMonth}T00:00:00.000Z`);
+      endDateObj = new Date(`${endMonth}T23:59:59.999Z`);
+    }
+  } else {
+    const setToEndOfDay = (date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+    switch (normalizedFilter) {
+      case 'today': {
+        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate()));
+        endDateObj = setToEndOfDay(startDateObj);
+        break;
+      }
+      case 'week': {
+        const dayOfWeek = today.getUTCDay();
+        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate() - dayOfWeek));
+        endDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate() + (6 - dayOfWeek), 23, 59, 59, 999));
+        break;
+      }
+      case 'previousmonth': {
+        const prevMonth = currentMonth - 1;
+        const prevYear = prevMonth < 1 ? currentYear - 1 : currentYear;
+        const adjustedPrevMonth = prevMonth < 1 ? 12 : prevMonth;
+        startDateObj = new Date(Date.UTC(prevYear, adjustedPrevMonth - 1, 1));
+        endDateObj = new Date(Date.UTC(prevYear, adjustedPrevMonth, 0, 23, 59, 59, 999));
+        break;
+      }
+      case 'currentyear': {
+        startDateObj = new Date(Date.UTC(currentYear, 0, 1));
+        endDateObj = new Date(today);
+        break;
+      }
+      case 'lastyear': {
+        startDateObj = new Date(Date.UTC(currentYear - 1, 0, 1));
+        endDateObj = new Date(Date.UTC(currentYear - 1, 11, 31, 23, 59, 59, 999));
+        break;
+      }
+      case 'last30days': {
+        startDateObj = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+        endDateObj = new Date(today);
+        break;
+      }
+      case 'monthtodate': {
+        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
+        endDateObj = new Date(today);
+        break;
+      }
+      case 'yeartodate': {
+        startDateObj = new Date(Date.UTC(currentYear, 0, 1));
+        endDateObj = new Date(today);
+        break;
+      }
+      case '6months': {
+        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 7, 1));
+        endDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      }
+      case 'currentmonth': {
+        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
+        endDateObj = new Date(today);
+        break;
+      }
+      default: {
+        const defaultPrevMonth = currentMonth - 1;
+        const defaultPrevYear = defaultPrevMonth < 1 ? currentYear - 1 : currentYear;
+        const defaultAdjustedPrevMonth = defaultPrevMonth < 1 ? 12 : defaultPrevMonth;
+        startDateObj = new Date(Date.UTC(defaultPrevYear, defaultAdjustedPrevMonth - 1, 1));
+        endDateObj = new Date(Date.UTC(defaultPrevYear, defaultAdjustedPrevMonth, 0, 23, 59, 59, 999));
+      }
+    }
+  }
+
+  let prevStartDateObj;
+  let prevEndDateObj;
+  if (startMonth && endMonth) {
+    prevStartDateObj = new Date(Date.UTC(startDateObj.getUTCFullYear() - 1, startDateObj.getUTCMonth(), startDateObj.getUTCDate()));
+    prevEndDateObj = new Date(Date.UTC(endDateObj.getUTCFullYear() - 1, endDateObj.getUTCMonth(), endDateObj.getUTCDate(), 23, 59, 59, 999));
+  } else {
+    switch (normalizedFilter) {
+      case 'today':
+        prevStartDateObj = new Date(Date.UTC(startDateObj.getUTCFullYear() - 1, startDateObj.getUTCMonth(), startDateObj.getUTCDate()));
+        prevEndDateObj = new Date(Date.UTC(endDateObj.getUTCFullYear() - 1, endDateObj.getUTCMonth(), endDateObj.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case 'week': {
+        const dayOfWeek = today.getUTCDay();
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate() - dayOfWeek));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate() + (6 - dayOfWeek), 23, 59, 59, 999));
+        break;
+      }
+      case 'previousmonth': {
+        const prevPrevMonth = currentMonth - 1;
+        const prevPrevYear = prevPrevMonth < 1 ? currentYear - 1 : currentYear;
+        const prevAdjustedPrevMonth = prevPrevMonth < 1 ? 12 : prevPrevMonth;
+        prevStartDateObj = new Date(Date.UTC(prevPrevYear - 1, prevAdjustedPrevMonth - 1, 1));
+        prevEndDateObj = new Date(Date.UTC(prevPrevYear - 1, prevAdjustedPrevMonth, 0, 23, 59, 59, 999));
+        break;
+      }
+      case 'currentyear':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, 0, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case 'lastyear':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 2, 0, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 2, 11, 31, 23, 59, 59, 999));
+        break;
+      case 'last30days':
+        prevStartDateObj = new Date(startDateObj.getTime() - 365 * 24 * 60 * 60 * 1000);
+        prevEndDateObj = new Date(endDateObj.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      case 'monthtodate':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case 'yeartodate':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, 0, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case '6months':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 7, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case 'currentmonth':
+        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, 1));
+        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      default: {
+        const defaultPrevPrevMonth = currentMonth - 1;
+        const defaultPrevPrevYear = defaultPrevPrevMonth < 1 ? currentYear - 1 : currentYear;
+        const defaultPrevAdjustedPrevMonth = defaultPrevPrevMonth < 1 ? 12 : defaultPrevPrevMonth;
+        prevStartDateObj = new Date(Date.UTC(defaultPrevPrevYear - 1, defaultPrevAdjustedPrevMonth - 1, 1));
+        prevEndDateObj = new Date(Date.UTC(defaultPrevPrevYear - 1, defaultPrevAdjustedPrevMonth, 0, 23, 59, 59, 999));
+      }
+    }
+  }
+
+  return {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  };
+};
 
 exports.getComprehensiveSalesData = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
+    if (!ensureDatabaseName(req, res)) {
+      return;
+    }
+    const pool = await getConnection(req);
+
     const {
       // Data type selector
       dataType = 'sales', // 'sales', 'regional', 'sku-list', 'categories-list', 'product-names', 'states', 'cities', 'adData'
@@ -29,26 +236,24 @@ exports.getComprehensiveSalesData = async (req, res) => {
       range = "lastmonth"
     } = req.query;
 
-    const pool = getPool();
-
-    // Handle different data types
+    // Handle different data types (removed clientId - each database is client-specific)
     switch (dataType) {
       case 'sales':
-        return await getSalesData(req, res, clientId, pool);
+        return await fetchSalesData(req, res, pool);
       case 'regional':
-        return await getRegionalSales(req, res, clientId, pool);
+        return await fetchRegionalSales(req, res, pool);
       case 'sku-list':
-        return await getSkuList(req, res, clientId, pool);
+        return await fetchSkuList(req, res, pool);
       case 'categories-list':
-        return await getCategoriesList(req, res, clientId, pool);
+        return await fetchCategoriesList(req, res, pool);
       case 'product-names':
-        return await getProductNames(req, res, clientId, pool);
+        return await fetchProductNames(req, res, pool);
       case 'states':
-        return await getStates(req, res, clientId, pool);
+        return await fetchStates(req, res, pool);
       case 'cities':
-        return await getCitiesList(req, res, clientId, pool);
+        return await fetchCitiesList(req, res, pool);
       case 'adData':
-        return await getAdData(req, res, clientId, pool);
+        return await fetchAdData(req, res, pool);
       default:
         return res.status(400).json({
           success: false,
@@ -62,8 +267,8 @@ exports.getComprehensiveSalesData = async (req, res) => {
   }
 };
 
-// Helper function for sales data
-const getSalesData = async (req, res, clientId, pool) => {
+// Helper function for sales data (removed clientId - each database is client-specific)
+const fetchSalesData = async (req, res, pool) => {
   const {
     sku,
     productName,
@@ -78,137 +283,15 @@ const getSalesData = async (req, res, clientId, pool) => {
     platform
   } = req.query;
 
-  const today = new Date();
-  const currentYear = today.getUTCFullYear();
-  const currentMonth = today.getUTCMonth() + 1; // 1-based month
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges(req.query);
 
-  // Determine date range
-  let startDateObj, endDateObj;
-
-  if (startMonth && endMonth) {
-    // Custom range - supports YYYY-MM-DD or YYYY-MM
-    if (startMonth.length === 7) { // YYYY-MM
-      startDateObj = new Date(startMonth + '-01T00:00:00.000Z');
-      endDateObj = new Date(endMonth + '-01T00:00:00.000Z');
-      endDateObj.setUTCMonth(endDateObj.getUTCMonth() + 1, 0); // Last day of end month
-    } else { // Assume YYYY-MM-DD
-      startDateObj = new Date(startMonth + 'T00:00:00.000Z');
-      endDateObj = new Date(endMonth + 'T23:59:59.999Z');
-    }
-  } else {
-    // Based on filterType
-    switch (filterType) {
-      case "today":
-        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate()));
-        endDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "week":
-        const dayOfWeek = today.getUTCDay();
-        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate() - dayOfWeek));
-        endDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate() + (6 - dayOfWeek), 23, 59, 59, 999));
-        break;
-      case "previousmonth":
-        const prevMonth = currentMonth - 1;
-        const prevYear = prevMonth < 1 ? currentYear - 1 : currentYear;
-        const adjustedPrevMonth = prevMonth < 1 ? 12 : prevMonth;
-        startDateObj = new Date(Date.UTC(prevYear, adjustedPrevMonth - 1, 1));
-        endDateObj = new Date(Date.UTC(prevYear, adjustedPrevMonth, 0, 23, 59, 59, 999));
-        break;
-      case "year":
-        startDateObj = new Date(Date.UTC(currentYear, 0, 1));
-        endDateObj = new Date(Date.UTC(currentYear, 11, 31, 23, 59, 59, 999));
-        break;
-      case "last30days":
-        startDateObj = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-        endDateObj = new Date(today);
-        break;
-      case "monthtodate":
-        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
-        endDateObj = new Date(today);
-        break;
-      case "yeartodate":
-        startDateObj = new Date(Date.UTC(currentYear, 0, 1));
-        endDateObj = new Date(today);
-        break;
-      case "6months":
-        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 7, 1));
-        endDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "currentmonth":
-        startDateObj = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
-        endDateObj = new Date(today);
-        break;
-      default:
-        // Default to previous month
-        const defaultPrevMonth = currentMonth - 1;
-        const defaultPrevYear = defaultPrevMonth < 1 ? currentYear - 1 : currentYear;
-        const defaultAdjustedPrevMonth = defaultPrevMonth < 1 ? 12 : defaultPrevMonth;
-        startDateObj = new Date(Date.UTC(defaultPrevYear, defaultAdjustedPrevMonth - 1, 1));
-        endDateObj = new Date(Date.UTC(defaultPrevYear, defaultAdjustedPrevMonth, 0, 23, 59, 59, 999));
-    }
-  }
-
-  // Calculate previous year date range for comparison
-  let prevStartDateObj, prevEndDateObj;
-  if (startMonth && endMonth) {
-    // Custom range, previous year same dates
-    prevStartDateObj = new Date(Date.UTC(startDateObj.getUTCFullYear() - 1, startDateObj.getUTCMonth(), startDateObj.getUTCDate()));
-    prevEndDateObj = new Date(Date.UTC(endDateObj.getUTCFullYear() - 1, endDateObj.getUTCMonth(), endDateObj.getUTCDate(), 23, 59, 59, 999));
-  } else {
-    // Based on filterType for previous year
-    switch (filterType) {
-      case "today":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate()));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "week":
-        const prevDayOfWeek = today.getUTCDay();
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate() - prevDayOfWeek));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate() + (6 - prevDayOfWeek), 23, 59, 59, 999));
-        break;
-      case "previousmonth":
-        const prevPrevMonth = currentMonth - 1;
-        const prevPrevYear = prevPrevMonth < 1 ? currentYear - 1 : currentYear;
-        const prevAdjustedPrevMonth = prevPrevMonth < 1 ? 12 : prevPrevMonth;
-        prevStartDateObj = new Date(Date.UTC(prevPrevYear - 1, prevAdjustedPrevMonth - 1, 1));
-        prevEndDateObj = new Date(Date.UTC(prevPrevYear - 1, prevAdjustedPrevMonth, 0, 23, 59, 59, 999));
-        break;
-      case "year":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, 0, 1));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, 11, 31, 23, 59, 59, 999));
-        break;
-      case "last30days":
-        prevStartDateObj = new Date(startDateObj.getTime() - 365 * 24 * 60 * 60 * 1000);
-        prevEndDateObj = new Date(endDateObj.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
-      case "monthtodate":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, 1));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "yeartodate":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, 0, 1));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "6months":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 7, 1));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      case "currentmonth":
-        prevStartDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, 1));
-        prevEndDateObj = new Date(Date.UTC(currentYear - 1, currentMonth - 1, today.getUTCDate(), 23, 59, 59, 999));
-        break;
-      default:
-        // Default to previous month
-        const defaultPrevPrevMonth = currentMonth - 1;
-        const defaultPrevPrevYear = defaultPrevPrevMonth < 1 ? currentYear - 1 : currentYear;
-        const defaultPrevAdjustedPrevMonth = defaultPrevPrevMonth < 1 ? 12 : defaultPrevPrevMonth;
-        prevStartDateObj = new Date(Date.UTC(defaultPrevPrevYear - 1, defaultPrevAdjustedPrevMonth - 1, 1));
-        prevEndDateObj = new Date(Date.UTC(defaultPrevPrevYear - 1, defaultPrevAdjustedPrevMonth, 0, 23, 59, 59, 999));
-    }
-  }
-
-  // Build WHERE conditions (without date)
-  let whereConditions = [`client_id = '${clientId}'`];
+  // Build WHERE conditions (removed client_id - each database is client-specific)
+  let whereConditions = [];
   if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
   if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
   if (category) whereConditions.push(`product_category = '${category}'`);
@@ -278,7 +361,6 @@ const getSalesData = async (req, res, clientId, pool) => {
       previous: prevResult.recordset
     },
     filters: {
-      clientId,
       dateRange: {
         current: {
           start: formatDate(startDateObj),
@@ -307,7 +389,7 @@ const getSalesData = async (req, res, clientId, pool) => {
 };
 
 // Helper function for regional sales
-const getRegionalSales = async (req, res, clientId, pool) => {
+const fetchRegionalSales = async (req, res, pool) => {
   const {
     sku,
     filterType = "lastmonth",
@@ -319,6 +401,7 @@ const getRegionalSales = async (req, res, clientId, pool) => {
     country,
     platform
   } = req.query;
+  const normalizedFilter = normalizeFilterType(filterType);
 
   const today = new Date();
   const currentYear = today.getUTCFullYear();
@@ -336,7 +419,7 @@ const getRegionalSales = async (req, res, clientId, pool) => {
     prevEndDate = new Date(startDate.getTime() - 1);
     prevStartDate = new Date(prevEndDate.getTime() - duration);
   } else {
-    switch (filterType) {
+    switch (normalizedFilter) {
       case "today":
         startDate = new Date(Date.UTC(currentYear, currentMonth, today.getUTCDate()));
         endDate = new Date(Date.UTC(currentYear, currentMonth, today.getUTCDate(), 23, 59, 59, 999));
@@ -363,11 +446,17 @@ const getRegionalSales = async (req, res, clientId, pool) => {
         prevStartDate = new Date(Date.UTC(prevMonthYear, adjustedPrevMonth, 1));
         prevEndDate = new Date(Date.UTC(prevMonthYear, adjustedPrevMonth + 1, 0, 23, 59, 59, 999));
         break;
-      case "year":
+      case "currentyear":
         startDate = new Date(Date.UTC(currentYear, 0, 1));
-        endDate = new Date(Date.UTC(currentYear, 11, 31, 23, 59, 59, 999));
+        endDate = new Date(today);
         prevStartDate = new Date(Date.UTC(currentYear - 1, 0, 1));
-        prevEndDate = new Date(Date.UTC(currentYear - 1, 11, 31, 23, 59, 59, 999));
+        prevEndDate = new Date(Date.UTC(currentYear - 1, today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+        break;
+      case "lastyear":
+        startDate = new Date(Date.UTC(currentYear - 1, 0, 1));
+        endDate = new Date(Date.UTC(currentYear - 1, 11, 31, 23, 59, 59, 999));
+        prevStartDate = new Date(Date.UTC(currentYear - 2, 0, 1));
+        prevEndDate = new Date(Date.UTC(currentYear - 2, 11, 31, 23, 59, 59, 999));
         break;
       case "last30days":
         startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -404,7 +493,7 @@ const getRegionalSales = async (req, res, clientId, pool) => {
   }
 
   // Build WHERE conditions
-  let whereConditions = [`client_id = '${clientId}'`];
+  let whereConditions = [];
   if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
   if (productCategory) whereConditions.push(`product_category = '${productCategory}'`);
   if (state) whereConditions.push(`state = '${state}'`);
@@ -497,11 +586,11 @@ const getRegionalSales = async (req, res, clientId, pool) => {
 };
 
 // Helper function for SKU list
-const getSkuList = async (req, res, clientId, pool) => {
+const fetchSkuList = async (req, res, pool) => {
   const query = `
     SELECT DISTINCT sku
     FROM std_orders
-    WHERE client_id = '${clientId}'
+    WHERE sku IS NOT NULL
     ORDER BY sku
   `;
 
@@ -514,11 +603,11 @@ const getSkuList = async (req, res, clientId, pool) => {
 };
 
 // Helper function for categories list
-const getCategoriesList = async (req, res, clientId, pool) => {
+const fetchCategoriesList = async (req, res, pool) => {
   const query = `
     SELECT DISTINCT product_category
     FROM std_orders
-    WHERE client_id = '${clientId}' AND product_category IS NOT NULL
+    WHERE product_category IS NOT NULL
     ORDER BY product_category
   `;
 
@@ -531,11 +620,11 @@ const getCategoriesList = async (req, res, clientId, pool) => {
 };
 
 // Helper function for product names
-const getProductNames = async (req, res, clientId, pool) => {
+const fetchProductNames = async (req, res, pool) => {
   const query = `
     SELECT DISTINCT product_name
     FROM std_orders
-    WHERE client_id = '${clientId}' AND product_name IS NOT NULL
+    WHERE product_name IS NOT NULL
     ORDER BY product_name
   `;
 
@@ -548,11 +637,11 @@ const getProductNames = async (req, res, clientId, pool) => {
 };
 
 // Helper function for states
-const getStates = async (req, res, clientId, pool) => {
+const fetchStates = async (req, res, pool) => {
   const query = `
     SELECT DISTINCT state
     FROM std_orders
-    WHERE client_id = '${clientId}' AND state IS NOT NULL
+    WHERE state IS NOT NULL
     ORDER BY state
   `;
 
@@ -565,15 +654,23 @@ const getStates = async (req, res, clientId, pool) => {
 };
 
 // Helper function for cities list
-const getCitiesList = async (req, res, clientId, pool) => {
-  const query = `
+const fetchCitiesList = async (req, res, pool) => {
+  const { state } = req.query;
+  const request = pool.request();
+  let query = `
     SELECT DISTINCT city
     FROM std_orders
-    WHERE client_id = '${clientId}' AND city IS NOT NULL
-    ORDER BY city
+    WHERE city IS NOT NULL
   `;
 
-  const result = await pool.request().query(query);
+  if (state && state.toLowerCase() !== 'all') {
+    query += ' AND state = @state';
+    request.input('state', state);
+  }
+
+  query += ' ORDER BY city';
+
+  const result = await request.query(query);
   res.json({
     success: true,
     message: 'Cities list retrieved successfully',
@@ -581,8 +678,120 @@ const getCitiesList = async (req, res, clientId, pool) => {
   });
 };
 
+const fetchCitiesByState = async (req, res, pool) => {
+  const stateParam = req.params?.state || req.query?.state;
+  if (!stateParam) {
+    return res.status(400).json({
+      success: false,
+      message: 'State parameter is required'
+    });
+  }
+
+  const request = pool.request();
+  request.input('state', stateParam);
+  const result = await request.query(`
+    SELECT DISTINCT city
+    FROM std_orders
+    WHERE state = @state AND city IS NOT NULL
+    ORDER BY city
+  `);
+
+  res.json({
+    success: true,
+    message: 'Cities retrieved successfully',
+    data: result.recordset.map(row => row.city)
+  });
+};
+
+const fetchSalesComparison = async (req, res, pool) => {
+  const {
+    sku,
+    category,
+    productName,
+    country,
+    platform,
+    state,
+    city,
+    filterType = 'previousmonth',
+    startMonth,
+    endMonth
+  } = req.query;
+
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges({ startMonth, endMonth, filterType });
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  const whereConditions = ['1=1'];
+  if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
+  if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
+  if (category) whereConditions.push(`product_category = '${category}'`);
+  if (state) whereConditions.push(`state = '${state}'`);
+  if (city) whereConditions.push(`city = '${city}'`);
+  if (country) whereConditions.push(`country LIKE '%${country}%'`);
+  if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+
+  const baseWhere = whereConditions.join(' AND ');
+
+  const buildAggregateQuery = (startDate, endDate) => `
+    SELECT
+      SUM(CAST(total_sales AS FLOAT)) as totalSales,
+      SUM(CAST(quantity AS FLOAT)) as totalUnits,
+      COUNT(*) as totalOrders,
+      SUM(CAST(item_price AS FLOAT)) as totalItemPrice
+    FROM std_orders
+    WHERE ${baseWhere}
+      AND purchase_date >= '${formatDate(startDate)}'
+      AND purchase_date <= '${formatDate(endDate)}'
+  `;
+
+  const [currentResult, previousResult] = await Promise.all([
+    pool.request().query(buildAggregateQuery(startDateObj, endDateObj)),
+    pool.request().query(buildAggregateQuery(prevStartDateObj, prevEndDateObj))
+  ]);
+
+  const current = currentResult.recordset[0] || { totalSales: 0, totalUnits: 0, totalOrders: 0, totalItemPrice: 0 };
+  const previous = previousResult.recordset[0] || { totalSales: 0, totalUnits: 0, totalOrders: 0, totalItemPrice: 0 };
+
+  const calcPercentChange = (curr, prev) => {
+    if (!prev || parseFloat(prev) === 0) {
+      return curr ? 100 : 0;
+    }
+    return (((curr - prev) / prev) * 100).toFixed(2);
+  };
+
+  res.json({
+    success: true,
+    message: 'Sales comparison retrieved successfully',
+    data: {
+      current,
+      previous,
+      percentageChange: {
+        sales: calcPercentChange(current.totalSales, previous.totalSales),
+        units: calcPercentChange(current.totalUnits, previous.totalUnits),
+        orders: calcPercentChange(current.totalOrders, previous.totalOrders),
+        itemPrice: calcPercentChange(current.totalItemPrice, previous.totalItemPrice)
+      },
+      period: {
+        current: {
+          start: formatDate(startDateObj),
+          end: formatDate(endDateObj)
+        },
+        previous: {
+          start: formatDate(prevStartDateObj),
+          end: formatDate(prevEndDateObj)
+        }
+      }
+    }
+  });
+};
+
 // Helper function for ad data
-const getAdData = async (req, res, clientId, pool) => {
+const fetchAdData = async (req, res, pool) => {
   const { range = "lastmonth", startDate, endDate, sku, country, platform } = req.query;
 
   const today = new Date();
@@ -660,7 +869,7 @@ const getAdData = async (req, res, clientId, pool) => {
   }
 
   // Filters
-  let whereConditions = [`client_id = '${clientId}'`];
+  let whereConditions = [];
   if (platform) whereConditions.push(`platform = '${platform}'`);
   if (country) whereConditions.push(`country = '${country}'`);
   if (sku) whereConditions.push(`sku = '${sku}'`);
@@ -757,3 +966,15 @@ const getAdData = async (req, res, clientId, pool) => {
     }
   });
 };
+
+exports.getSalesData = (req, res) => withDatabaseConnection(req, res, fetchSalesData);
+exports.getRegionalSales = (req, res) => withDatabaseConnection(req, res, fetchRegionalSales);
+exports.getSkuList = (req, res) => withDatabaseConnection(req, res, fetchSkuList);
+exports.getCategoriesList = (req, res) => withDatabaseConnection(req, res, fetchCategoriesList);
+exports.getProductNames = (req, res) => withDatabaseConnection(req, res, fetchProductNames);
+exports.getStates = (req, res) => withDatabaseConnection(req, res, fetchStates);
+exports.getCitiesByState = (req, res) => withDatabaseConnection(req, res, fetchCitiesByState);
+exports.getStatesList = (req, res) => withDatabaseConnection(req, res, fetchStates);
+exports.getCitiesList = (req, res) => withDatabaseConnection(req, res, fetchCitiesList);
+exports.getSalesComparison = (req, res) => withDatabaseConnection(req, res, fetchSalesComparison);
+exports.getAdData = (req, res) => withDatabaseConnection(req, res, fetchAdData);

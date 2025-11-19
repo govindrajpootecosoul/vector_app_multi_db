@@ -1,19 +1,43 @@
 const sql = require('mssql');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { getPool } = require('../config/db');
+const { getMainPool } = require('../config/db');
 
 class UserService {
   async login(email, password) {
     try {
-      const pool = getPool();
+      // Use main database pool for authentication
+      const pool = getMainPool();
       if (!pool) {
         throw new Error('Database connection not established');
       }
 
-      // Check if app_users table exists, create if not
+      // Check if app_users table exists, create if not (with databaseName field)
       const tableCheck = await pool.request()
-        .query("IF OBJECT_ID('dbo.app_users', 'U') IS NULL BEGIN CREATE TABLE dbo.app_users (id INT IDENTITY(1,1) PRIMARY KEY, user_name VARCHAR(255) NOT NULL, email VARCHAR(255) NOT NULL UNIQUE, password VARCHAR(255) NOT NULL, phone VARCHAR(50), role VARCHAR(50) NOT NULL, client_id VARCHAR(255) NOT NULL, permission_level VARCHAR(50), account_status VARCHAR(50) DEFAULT 'active', created_at DATETIME DEFAULT GETDATE(), updated_at DATETIME DEFAULT GETDATE()) END");
+        .query(`IF OBJECT_ID('dbo.app_users', 'U') IS NULL 
+                BEGIN 
+                  CREATE TABLE dbo.app_users (
+                    id INT IDENTITY(1,1) PRIMARY KEY, 
+                    user_name VARCHAR(255) NOT NULL, 
+                    email VARCHAR(255) NOT NULL UNIQUE, 
+                    password VARCHAR(255) NOT NULL, 
+                    phone VARCHAR(50), 
+                    role VARCHAR(50) NOT NULL, 
+                    client_id VARCHAR(255) NOT NULL, 
+                    database_name VARCHAR(255) NOT NULL,
+                    permission_level VARCHAR(50), 
+                    account_status VARCHAR(50) DEFAULT 'active', 
+                    created_at DATETIME DEFAULT GETDATE(), 
+                    updated_at DATETIME DEFAULT GETDATE()
+                  ) 
+                END`);
+
+      // Add database_name column if it doesn't exist (for existing tables)
+      await pool.request()
+        .query(`IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.app_users') AND name = 'database_name')
+                BEGIN
+                  ALTER TABLE dbo.app_users ADD database_name VARCHAR(255) NULL
+                END`);
 
       const result = await pool.request()
         .input('email', sql.VarChar, email)
@@ -30,10 +54,16 @@ class UserService {
         throw new Error('Invalid password');
       }
 
+      // Include databaseName in JWT token payload
       const token = jwt.sign(
-        { userId: user.id, email: user.email, client_id: user.client_id },
+        { 
+          userId: user.id, 
+          email: user.email, 
+          client_id: user.client_id,
+          databaseName: user.database_name || user.databaseName // Support both field names
+        },
         process.env.JWT_SECRET,
-        { expiresIn: '110h' }
+        { expiresIn: '44110h' }
       );
 
       // Decode token to get expiration time
@@ -50,6 +80,7 @@ class UserService {
             user_name: user.user_name,
             email: user.email,
             client_id: user.client_id,
+            databaseName: user.database_name || user.databaseName,
             role: user.role,
             account_status: user.account_status,
           },
@@ -60,16 +91,45 @@ class UserService {
     }
   }
 
-  async signup({ name, email, password, phone, role, clientId }) {
+  async signup({ name, email, password, phone, role, clientId, databaseName }) {
     try {
-      const pool = getPool();
+      // Use main database pool for user registration
+      const pool = getMainPool();
       if (!pool) {
         throw new Error('Database connection not established');
       }
 
-      // Check if app_users table exists, create if not
+      // Validate required fields
+      if (!databaseName) {
+        throw new Error('databaseName is required');
+      }
+
+      // Check if app_users table exists, create if not (with databaseName field)
       const tableCheck = await pool.request()
-        .query("IF OBJECT_ID('dbo.app_users', 'U') IS NULL BEGIN CREATE TABLE dbo.app_users (id INT IDENTITY(1,1) PRIMARY KEY, user_name VARCHAR(255) NOT NULL, email VARCHAR(255) NOT NULL UNIQUE, password VARCHAR(255) NOT NULL, phone VARCHAR(50), role VARCHAR(50) NOT NULL, client_id VARCHAR(255) NOT NULL, permission_level VARCHAR(50), account_status VARCHAR(50) DEFAULT 'active', created_at DATETIME DEFAULT GETDATE(), updated_at DATETIME DEFAULT GETDATE()) END");
+        .query(`IF OBJECT_ID('dbo.app_users', 'U') IS NULL 
+                BEGIN 
+                  CREATE TABLE dbo.app_users (
+                    id INT IDENTITY(1,1) PRIMARY KEY, 
+                    user_name VARCHAR(255) NOT NULL, 
+                    email VARCHAR(255) NOT NULL UNIQUE, 
+                    password VARCHAR(255) NOT NULL, 
+                    phone VARCHAR(50), 
+                    role VARCHAR(50) NOT NULL, 
+                    client_id VARCHAR(255) NOT NULL, 
+                    database_name VARCHAR(255) NOT NULL,
+                    permission_level VARCHAR(50), 
+                    account_status VARCHAR(50) DEFAULT 'active', 
+                    created_at DATETIME DEFAULT GETDATE(), 
+                    updated_at DATETIME DEFAULT GETDATE()
+                  ) 
+                END`);
+
+      // Add database_name column if it doesn't exist (for existing tables)
+      await pool.request()
+        .query(`IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.app_users') AND name = 'database_name')
+                BEGIN
+                  ALTER TABLE dbo.app_users ADD database_name VARCHAR(255) NULL
+                END`);
 
       // Check if user with email already exists
       const existingUserResult = await pool.request()
@@ -83,7 +143,7 @@ class UserService {
       // Hash the password
       const hashedPassword = await this.hashPassword(password);
 
-      // Insert new user
+      // Insert new user with databaseName
       const insertResult = await pool.request()
         .input('user_name', sql.VarChar, name)
         .input('email', sql.VarChar, email)
@@ -91,8 +151,9 @@ class UserService {
         .input('phone', sql.VarChar, phone)
         .input('role', sql.VarChar, role)
         .input('client_id', sql.VarChar, clientId)
-        .query(`INSERT INTO app_users (user_name, email, password, phone, role, client_id)
-                VALUES (@user_name, @email, @password, @phone, @role, @client_id)`);
+        .input('database_name', sql.VarChar, databaseName)
+        .query(`INSERT INTO app_users (user_name, email, password, phone, role, client_id, database_name)
+                VALUES (@user_name, @email, @password, @phone, @role, @client_id, @database_name)`);
 
       return {
         success: true,
@@ -105,7 +166,8 @@ class UserService {
 
   async getUserById(userId) {
     try {
-      const pool = getPool();
+      // Use main database pool for user queries
+      const pool = getMainPool();
       if (!pool) {
         throw new Error('Database connection not established');
       }
@@ -123,6 +185,7 @@ class UserService {
         user_name: user.user_name,
         email: user.email,
         client_id: user.client_id,
+        databaseName: user.database_name || user.databaseName,
         profile_picture: user.profile_picture,
         mobile: user.phone,
         permission_level: user.role,
@@ -137,7 +200,8 @@ class UserService {
 
   async getClientByClientId(clientId) {
     try {
-      const pool = getPool();
+      // Use main database pool for client config queries
+      const pool = getMainPool();
       if (!pool) {
         throw new Error('Database connection not established');
       }

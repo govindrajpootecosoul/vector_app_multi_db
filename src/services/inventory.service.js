@@ -4,39 +4,78 @@ const sql = require('mssql');
 exports.getInventoryByDatabase = async (req, res) => {
   try {
     const { sku, category, product, country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
+    
+    // Get database name from token (priority) or from middleware
+    // Priority: token databaseName > req.databaseName (from middleware)
+    let databaseName = req.user?.databaseName || req.databaseName;
 
-    const pool = await getConnection();
-    let query = 'SELECT * FROM std_inventory WHERE client_id = @clientId';
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+
+    // Set req.databaseName for getConnection to use
+    req.databaseName = databaseName;
+
+    // Get connection pool (reuses cached pool if available - FAST!)
+    const pool = await getConnection(req);
+    
+    // Use std_inventory table directly - no checks needed (FAST!)
+    const tableName = 'std_inventory';
+    
+    // Build query without client_id filter - fetch all data from the database
+    // Use case-insensitive matching with LIKE for better flexibility
+    let query = `SELECT * FROM ${tableName}`;
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
+    console.log('Using table:', tableName);
+    
+    // Check if we have any filters - if not, just select all
+    const hasFilters = sku || category || product || country || platform;
+    if (hasFilters) {
+      query += ' WHERE 1=1';
+    }
 
-    // Build filter based on query params
+    // Build filter based on query params - simple LIKE (SQL Server is case-insensitive by default)
     if (sku) {
-      query += ' AND sku = @sku';
-      request.input('sku', sql.VarChar, sku);
+      query += ' AND sku LIKE @sku';
+      request.input('sku', sql.VarChar, `%${sku}%`);
     }
     if (category) {
-      query += ' AND product_category = @category';
-      request.input('category', sql.VarChar, category);
+      query += ' AND product_category LIKE @category';
+      request.input('category', sql.VarChar, `%${category}%`);
     }
     if (product) {
-      query += ' AND product_name = @product';
-      request.input('product', sql.VarChar, product);
+      query += ' AND product_name LIKE @product';
+      request.input('product', sql.VarChar, `%${product}%`);
     }
     if (country) {
-      query += ' AND country = @country';
-      request.input('country', sql.VarChar, country);
+      query += ' AND country LIKE @country';
+      request.input('country', sql.VarChar, `%${country}%`);
     }
     if (platform) {
-      query += ' AND platform = @platform';
-      request.input('platform', sql.VarChar, platform);
+      query += ' AND platform LIKE @platform';
+      request.input('platform', sql.VarChar, `%${platform}%`);
     }
 
-    const result = await request.query(query);
+    // Execute the main query - FAST and SIMPLE
+    let result;
+    try {
+      if (!hasFilters) {
+        // Simple query without filters - DIRECT (FASTEST)
+        result = await pool.request().query(`SELECT * FROM ${tableName}`);
+      } else {
+        // Query with filters
+        result = await request.query(query);
+      }
+    } catch (queryErr) {
+      console.error('❌ Query execution error:', queryErr.message);
+      throw queryErr;
+    }
+    
     const inventoryData = result.recordset;
-
-    console.log('Total inventory items found:', inventoryData.length);
 
     // Calculate totals
     let totalQuantity = 0;
@@ -48,18 +87,38 @@ exports.getInventoryByDatabase = async (req, res) => {
       totalValue += Number(item.total_value || item.value) || 0;
     });
 
-    // Return filtered inventory data
-    res.json({
+    // Return inventory data with database info
+    const response = {
       success: true,
       message: 'Inventory data retrieved successfully',
+      database: databaseName,
+      table: tableName,
+      filters: {
+        country: country || 'all',
+        platform: platform || 'all',
+        sku: sku || 'all',
+        category: category || 'all',
+        product: product || 'all'
+      },
       data: {
         totalItems,
+        totalQuantity,
+        totalValue,
         inventoryData
       }
-    });
+    };
+    
+           // Response sent - no logging for speed
+    
+    res.json(response);
 
   } catch (error) {
-    console.error('Inventory service error:', error);
+    console.error('========================================');
+    console.error('❌ INVENTORY SERVICE ERROR');
+    console.error('========================================');
+    console.error('Error Message:', error.message);
+    console.error('Error Stack:', error.stack);
+    console.error('========================================\n');
     res.status(500).json({ error: error.message });
   }
 };
@@ -67,43 +126,34 @@ exports.getInventoryByDatabase = async (req, res) => {
 exports.getInventoryDropdownData = async (req, res) => {
   try {
     const { platform, country } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
 
-    const pool = await getConnection();
+    const pool = await getConnection(req);
 
-    let skuQuery = 'SELECT DISTINCT sku FROM std_inventory WHERE client_id = @clientId AND sku IS NOT NULL';
-    let categoryQuery = 'SELECT DISTINCT product_category FROM std_inventory WHERE client_id = @clientId AND product_category IS NOT NULL';
-    let productQuery = 'SELECT DISTINCT product_name FROM std_inventory WHERE client_id = @clientId AND product_name IS NOT NULL';
-
-    const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
+    let skuQuery = 'SELECT DISTINCT sku FROM std_inventory WHERE sku IS NOT NULL';
+    let categoryQuery = 'SELECT DISTINCT product_category FROM std_inventory WHERE product_category IS NOT NULL';
+    let productQuery = 'SELECT DISTINCT product_name FROM std_inventory WHERE product_name IS NOT NULL';
 
     // Add filters for platform and country if provided
     if (platform) {
       skuQuery += ' AND platform LIKE @platform';
       categoryQuery += ' AND platform LIKE @platform';
       productQuery += ' AND platform LIKE @platform';
-      request.input('platform', sql.VarChar, `%${platform}%`);
     }
     if (country) {
       skuQuery += ' AND country LIKE @country';
       categoryQuery += ' AND country LIKE @country';
       productQuery += ' AND country LIKE @country';
-      request.input('country', sql.VarChar, `%${country}%`);
     }
 
     const skuRequest = pool.request();
-    skuRequest.input('clientId', sql.VarChar, clientId);
     if (platform) skuRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) skuRequest.input('country', sql.VarChar, `%${country}%`);
 
     const categoryRequest = pool.request();
-    categoryRequest.input('clientId', sql.VarChar, clientId);
     if (platform) categoryRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) categoryRequest.input('country', sql.VarChar, `%${country}%`);
 
     const productRequest = pool.request();
-    productRequest.input('clientId', sql.VarChar, clientId);
     if (platform) productRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) productRequest.input('country', sql.VarChar, `%${country}%`);
 
@@ -136,12 +186,10 @@ exports.getInventoryDropdownData = async (req, res) => {
 exports.getInventoryOverstockData = async (req, res) => {
   try {
     const { country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
 
-    const pool = await getConnection();
-    let query = 'SELECT * FROM std_inventory WHERE client_id = @clientId AND stock_status = @stockStatus AND dos_2 >= @dos2 AND afn_fulfillable_quantity>=@afn_fulfillable_quantity';
+    const pool = await getConnection(req);
+    let query = 'SELECT * FROM std_inventory WHERE stock_status = @stockStatus AND dos_2 >= @dos2 AND afn_fulfillable_quantity>=@afn_fulfillable_quantity';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
     request.input('stockStatus', sql.VarChar, 'Overstock');
     request.input('dos2', sql.Int, 90);
     request.input('afn_fulfillable_quantity', sql.Int, 90);
@@ -176,12 +224,10 @@ exports.getInventoryOverstockData = async (req, res) => {
 exports.getInventoryUnderstockData = async (req, res) => {
   try {
     const { country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
 
-    const pool = await getConnection();
-    let query = 'SELECT * FROM std_inventory WHERE client_id = @clientId AND stock_status = @stockStatus AND dos_2 <= @dos2 AND afn_fulfillable_quantity<=@afn_fulfillable_quantity ';
+    const pool = await getConnection(req);
+    let query = 'SELECT * FROM std_inventory WHERE stock_status = @stockStatus AND dos_2 <= @dos2 AND afn_fulfillable_quantity<=@afn_fulfillable_quantity ';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
     request.input('stockStatus', sql.VarChar, 'Understock');
     request.input('dos2', sql.Int, 30);
     request.input('afn_fulfillable_quantity', sql.Int, 30);
@@ -216,12 +262,10 @@ exports.getInventoryUnderstockData = async (req, res) => {
 exports.getInventoryActiveSKUOutOfStockData = async (req, res) => {
   try {
     const { country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
 
-    const pool = await getConnection();
-    let query = 'SELECT * FROM std_inventory WHERE client_id = @clientId AND stock_status = @stockStatus AND dos_2 = @dos2 AND afn_fulfillable_quantity=@afn_fulfillable_quantity';
+    const pool = await getConnection(req);
+    let query = 'SELECT * FROM std_inventory WHERE stock_status = @stockStatus AND dos_2 = @dos2 AND afn_fulfillable_quantity=@afn_fulfillable_quantity';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
     request.input('stockStatus', sql.VarChar, 'Understock');
     request.input('dos2', sql.Int, 0);
     request.input('afn_fulfillable_quantity', sql.Int, 0);
@@ -255,17 +299,13 @@ exports.getInventoryActiveSKUOutOfStockData = async (req, res) => {
 
 exports.getInventoryCountSummary = async (req, res) => {
   try {
-    const clientId = req.user.client_id; // Get client_id from JWT token
-
-    const pool = await getConnection();
+    const pool = await getConnection(req);
     const query = `
       SELECT country, platform, COUNT(*) as count
       FROM std_inventory
-      WHERE client_id = @clientId
       GROUP BY country, platform
     `;
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
 
     const result = await request.query(query);
     const countSummary = result.recordset;
@@ -287,14 +327,12 @@ exports.getInventoryCountSummary = async (req, res) => {
 exports.getInventoryStockStatusCounts = async (req, res) => {
   try {
     const { country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
 
-    const pool = await getConnection();
+    const pool = await getConnection(req);
 
     // Build base WHERE clause
-    let baseWhere = 'client_id = @clientId';
+    let baseWhere = '1=1';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
 
     if (platform) {
       baseWhere += ' AND platform LIKE @platform';
@@ -308,7 +346,6 @@ exports.getInventoryStockStatusCounts = async (req, res) => {
     // Count overstock: stock_status: "Overstock", dos_2: >= 90
     const overstockQuery = `SELECT COUNT(*) as count FROM std_inventory WHERE ${baseWhere} AND stock_status = 'Overstock' AND dos_2 >= 90 AND afn_fulfillable_quantity >= 90`;
     const overstockRequest = pool.request();
-    overstockRequest.input('clientId', sql.VarChar, clientId);
     if (platform) overstockRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) overstockRequest.input('country', sql.VarChar, `%${country}%`);
     const overstockResult = await overstockRequest.query(overstockQuery);
@@ -317,7 +354,6 @@ exports.getInventoryStockStatusCounts = async (req, res) => {
     // Count understock: stock_status: "Understock", dos_2: <= 30
     const understockQuery = `SELECT COUNT(*) as count FROM std_inventory WHERE ${baseWhere} AND stock_status = 'Understock' AND dos_2 <= 30 AND afn_fulfillable_quantity <= 30`;
     const understockRequest = pool.request();
-    understockRequest.input('clientId', sql.VarChar, clientId);
     if (platform) understockRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) understockRequest.input('country', sql.VarChar, `%${country}%`);
     const understockResult = await understockRequest.query(understockQuery);
@@ -326,7 +362,6 @@ exports.getInventoryStockStatusCounts = async (req, res) => {
     // Count active SKU out of stock: stock_status: "Understock", dos_2: 0
     const activeSKUOutOfStockQuery = `SELECT COUNT(*) as count FROM std_inventory WHERE ${baseWhere} AND stock_status = 'Understock' AND dos_2 = 0 AND afn_fulfillable_quantity = 0`;
     const activeSKUOutOfStockRequest = pool.request();
-    activeSKUOutOfStockRequest.input('clientId', sql.VarChar, clientId);
     if (platform) activeSKUOutOfStockRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) activeSKUOutOfStockRequest.input('country', sql.VarChar, `%${country}%`);
     const activeSKUOutOfStockResult = await activeSKUOutOfStockRequest.query(activeSKUOutOfStockQuery);
@@ -335,7 +370,6 @@ exports.getInventoryStockStatusCounts = async (req, res) => {
     // Get average instock rate percent, excluding 0 values
     const instockRateQuery = `SELECT AVG(instock_rate_percent) as instock_rate_percent FROM std_inventory WHERE ${baseWhere} AND instock_rate_percent IS NOT NULL AND instock_rate_percent != 0`;
     const instockRateRequest = pool.request();
-    instockRateRequest.input('clientId', sql.VarChar, clientId);
     if (platform) instockRateRequest.input('platform', sql.VarChar, `%${platform}%`);
     if (country) instockRateRequest.input('country', sql.VarChar, `%${country}%`);
     const instockRateResult = await instockRateRequest.query(instockRateQuery);

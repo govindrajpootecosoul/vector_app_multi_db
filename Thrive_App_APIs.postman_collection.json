@@ -1,0 +1,877 @@
+{
+	"info": {
+		"_postman_id": "thrive-app-apis-2024",
+		"name": "Thrive App APIs",
+		"description": "Complete API collection for Thrive App Backend - All APIs use JWT token with databaseName for multi-tenant access",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{auth_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3110",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/user/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "user", "login"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Signup",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\",\n  \"name\": \"John Doe\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/user/signup",
+							"host": ["{{base_url}}"],
+							"path": ["api", "user", "signup"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get User Details",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/user/details",
+							"host": ["{{base_url}}"],
+							"path": ["api", "user", "details"]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Inventory APIs",
+			"item": [
+				{
+					"name": "Get Inventory Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory?country=USA&platform=amazon&sku=BCS175",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"description": "Filter by country"
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"description": "Filter by platform"
+								},
+								{
+									"key": "sku",
+									"value": "BCS175",
+									"description": "Filter by SKU"
+								},
+								{
+									"key": "category",
+									"value": "",
+									"description": "Filter by product category",
+									"disabled": true
+								},
+								{
+									"key": "product",
+									"value": "",
+									"description": "Filter by product name",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get inventory data. Database name is extracted from JWT token. All filters are optional."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Inventory Dropdown Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory/dropdown-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory", "dropdown-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get dropdown data (SKU list, category list, product name list)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Overstock Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory/overstock-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory", "overstock-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Understock Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory/understock-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory", "understock-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Active SKU Out of Stock",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory/activeSKUoutofstock-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory", "activeSKUoutofstock-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Inventory Executive Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/inventory/executive-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "inventory", "executive-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Order APIs",
+			"item": [
+				{
+					"name": "Get Order List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/orders/orderlist?filterType=previousmonth&sku=BCS175&platform=amazon&country=USA",
+							"host": ["{{base_url}}"],
+							"path": ["api", "orders", "orderlist"],
+							"query": [
+								{
+									"key": "filterType",
+									"value": "previousmonth",
+									"description": "Options: currentmonth, previousmonth, currentyear, lastyear"
+								},
+								{
+									"key": "sku",
+									"value": "BCS175",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								},
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "product_category",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "product_name",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "startMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM",
+									"disabled": true
+								},
+								{
+									"key": "endMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM",
+									"disabled": true
+								},
+								{
+									"key": "fromDate",
+									"value": "",
+									"description": "Custom range: YYYY-MM-DD",
+									"disabled": true
+								},
+								{
+									"key": "toDate",
+									"value": "",
+									"description": "Custom range: YYYY-MM-DD",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get order list. Requires filterType OR custom date range (startMonth/endMonth OR fromDate/toDate)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Order Dropdown Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/orders/dropdown-data?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "orders", "dropdown-data"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Ad Sales & Ad Spend APIs",
+			"item": [
+				{
+					"name": "Get Ad Sales Ad Spend Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/adsalesadspend?filterType=previousmonth&platform=amazon&country=USA",
+							"host": ["{{base_url}}"],
+							"path": ["api", "adsalesadspend"],
+							"query": [
+								{
+									"key": "filterType",
+									"value": "previousmonth",
+									"description": "Required. Options: currentmonth, previousmonth, currentyear, lastyear, customrange"
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								},
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "sku",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "startMonth",
+									"value": "",
+									"description": "Custom range: MM-YYYY",
+									"disabled": true
+								},
+								{
+									"key": "endMonth",
+									"value": "",
+									"description": "Custom range: MM-YYYY",
+									"disabled": true
+								},
+								{
+									"key": "fromDate",
+									"value": "",
+									"description": "Custom range: YYYY-MM-DD",
+									"disabled": true
+								},
+								{
+									"key": "toDate",
+									"value": "",
+									"description": "Custom range: YYYY-MM-DD",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get ad sales and ad spend data. filterType is required."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "PNL APIs",
+			"item": [
+				{
+					"name": "Get PNL Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/pnl/pnl-data?range=lastmonth&sku=BCS175&platform=amazon&country=USA",
+							"host": ["{{base_url}}"],
+							"path": ["api", "pnl", "pnl-data"],
+							"query": [
+								{
+									"key": "range",
+									"value": "lastmonth",
+									"description": "Options: currentmonths, lastmonth, yeartodate, lastyear"
+								},
+								{
+									"key": "sku",
+									"value": "BCS175",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								},
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "category",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "productName",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "date",
+									"value": "",
+									"description": "Specific date: YYYY-MM-DD",
+									"disabled": true
+								},
+								{
+									"key": "startMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM",
+									"disabled": true
+								},
+								{
+									"key": "endMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get PNL data. Requires range OR date OR startMonth/endMonth"
+					},
+					"response": []
+				},
+				{
+					"name": "Get PNL Executive Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/pnl/pnlexecutive?range=lastmonth&platform=amazon&country=USA",
+							"host": ["{{base_url}}"],
+							"path": ["api", "pnl", "pnlexecutive"],
+							"query": [
+								{
+									"key": "range",
+									"value": "lastmonth"
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								},
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get PNL Dropdown Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/pnl/pnldropdown?country=USA&platform=amazon",
+							"host": ["{{base_url}}"],
+							"path": ["api", "pnl", "pnldropdown"],
+							"query": [
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Sales Analysis APIs",
+			"item": [
+				{
+					"name": "Get Comprehensive Sales Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/data?dataType=sales&filterType=previousmonth&sku=BCS175&platform=amazon&country=USA",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "data"],
+							"query": [
+								{
+									"key": "dataType",
+									"value": "sales",
+									"description": "Options: sales, regional, sku-list, categories-list, product-names, states, cities, adData"
+								},
+								{
+									"key": "filterType",
+									"value": "previousmonth",
+									"description": "Options: today, week, previousmonth, year, last30days, monthtodate, yeartodate, 6months, currentmonth"
+								},
+								{
+									"key": "sku",
+									"value": "BCS175",
+									"disabled": true
+								},
+								{
+									"key": "platform",
+									"value": "amazon",
+									"disabled": true
+								},
+								{
+									"key": "country",
+									"value": "USA",
+									"disabled": true
+								},
+								{
+									"key": "productName",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "category",
+									"value": "",
+									"disabled": true
+								},
+								{
+									"key": "startMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM or YYYY-MM-DD",
+									"disabled": true
+								},
+								{
+									"key": "endMonth",
+									"value": "",
+									"description": "Custom range: YYYY-MM or YYYY-MM-DD",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Comprehensive sales data endpoint supporting multiple data types"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Sales Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/sales?filterType=previousmonth",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "sales"],
+							"query": [
+								{
+									"key": "filterType",
+									"value": "previousmonth"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Regional Sales",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/sales/region?filterType=lastmonth",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "sales", "region"],
+							"query": [
+								{
+									"key": "filterType",
+									"value": "lastmonth"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get SKU List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/sku-list",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "sku-list"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Categories List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/categories-list",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "categories-list"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Product Names",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/product-names",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "product-names"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get States List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/states-list",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "states-list"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Cities List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/cities-list",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "cities-list"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Ad Data",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/salesanalysis/adData/filterData?range=lastmonth",
+							"host": ["{{base_url}}"],
+							"path": ["api", "salesanalysis", "adData", "filterData"],
+							"query": [
+								{
+									"key": "range",
+									"value": "lastmonth"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Decomposition APIs",
+			"item": [
+				{
+					"name": "Get Decomposition Summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/decomposition/summary?sku=KCA-200844&filterType=lastmonth",
+							"host": ["{{base_url}}"],
+							"path": ["api", "decomposition", "summary"],
+							"query": [
+								{
+									"key": "sku",
+									"value": "KCA-200844"
+								},
+								{
+									"key": "filterType",
+									"value": "lastmonth",
+									"description": "Options: currentmonth, previousmonth, currentyear, previousyear, custom"
+								},
+								{
+									"key": "year",
+									"value": "",
+									"disabled": true,
+									"description": "Optional helper when using fromMonth/toMonth"
+								},
+								{
+									"key": "startMonth",
+									"value": "",
+									"disabled": true,
+									"description": "Custom range start (YYYY-MM)"
+								},
+								{
+									"key": "endMonth",
+									"value": "",
+									"disabled": true,
+									"description": "Custom range end (YYYY-MM)"
+								},
+								{
+									"key": "fromMonth",
+									"value": "",
+									"disabled": true,
+									"description": "Optional legacy month number (1-12)"
+								},
+								{
+									"key": "toMonth",
+									"value": "",
+									"disabled": true,
+									"description": "Optional legacy month number (1-12)"
+								}
+							]
+						},
+						"description": "Fetches decomposition summary across the selected period"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "App Constants",
+			"item": [
+				{
+					"name": "Get All Constants",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/appconstant",
+							"host": ["{{base_url}}"],
+							"path": ["api", "appconstant"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Constant By Key",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/appconstant/:key",
+							"host": ["{{base_url}}"],
+							"path": ["api", "appconstant", ":key"],
+							"variable": [
+								{
+									"key": "key",
+									"value": "SOME_KEY"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Health Check",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
+

@@ -3,7 +3,7 @@ const logger = require('../utils/logger');
 
 const getAllConstants = async (req, res) => {
   try {
-    const constants = await appConstantService.getAllConstants();
+    const constants = await appConstantService.getAllConstants(req);
 
     logger.info('App constants fetched successfully');
     res.status(200).json({
@@ -23,7 +23,7 @@ const getAllConstants = async (req, res) => {
 const getConstantByKey = async (req, res) => {
   try {
     const { key } = req.params;
-    const constant = await appConstantService.getConstantByKey(key);
+    const constant = await appConstantService.getConstantByKey(key, req);
 
     logger.info(`App constant fetched for key: ${key}`);
     res.status(200).json({

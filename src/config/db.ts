@@ -1,35 +1,51 @@
-const sql = require('mssql');
-require('dotenv').config();
-const { initializeClientTables } = require('../utils/db-init');
+/**
+ * Database Connection Manager (TypeScript)
+ * 
+ * This module manages database connections for a multi-tenant architecture.
+ * 
+ * Why mssql over Sequelize:
+ * - Direct SQL Server support with connection pooling
+ * - Better performance for multi-tenant scenarios
+ * - More control over connection management
+ * - Simpler dynamic database switching
+ * - Native Azure SQL Database support
+ */
+
+import sql from 'mssql';
+import dotenv from 'dotenv';
+// import { initializeClientTables } from '../utils/db-init'; // Commented out - not used currently
+
+dotenv.config();
 
 // Base database configuration for Azure SQL
-const baseConfig = {
-  server: process.env.DB_SERVER,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+const baseConfig: sql.config = {
+  server: process.env.DB_SERVER || '',
+  user: process.env.DB_USER || '',
+  password: process.env.DB_PASSWORD || '',
   options: {
     encrypt: true,
-    trustServerCertificate: false
-  }
+    trustServerCertificate: false,
+  },
 };
 
 // Main database configuration (for user authentication)
-const mainDbConfig = {
+const mainDbConfig: sql.config = {
   ...baseConfig,
   database: process.env.DB_DATABASE || 'main-db', // Main database for user management
 };
 
 // Connection pools cache - stores connections for different databases
-const connectionPools = new Map();
+const connectionPools = new Map<string, sql.ConnectionPool>();
 
 // Main database pool (for authentication)
-let mainPool = null;
+let mainPool: sql.ConnectionPool | null = null;
 
 /**
  * Connect to the main database (for user authentication)
  * This is called once at server startup
+ * @returns {Promise<sql.ConnectionPool>} Main database connection pool
  */
-const connectDB = async () => {
+export const connectDB = async (): Promise<sql.ConnectionPool> => {
   let retries = 3;
   while (retries > 0) {
     try {
@@ -42,7 +58,7 @@ const connectDB = async () => {
       retries--;
       if (retries > 0) {
         console.log(`Retrying connection... (${retries} attempts left)`);
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
       }
     }
   }
@@ -52,56 +68,51 @@ const connectDB = async () => {
 
 /**
  * Get connection pool for a specific database
+ * Creates a new connection if not cached, or returns cached connection
  * @param {string} databaseName - Name of the database to connect to
  * @returns {Promise<sql.ConnectionPool>} Connection pool for the specified database
  */
-const getPoolForDatabase = async (databaseName) => {
+export const getPoolForDatabase = async (databaseName: string): Promise<sql.ConnectionPool> => {
   // If no database name provided, return main pool
   if (!databaseName) {
+    if (!mainPool) {
+      throw new Error('Main database connection not established');
+    }
     return mainPool;
   }
 
   // If it's the main database, return main pool
   if (databaseName === 'main-db' || databaseName === process.env.DB_DATABASE) {
+    if (!mainPool) {
+      throw new Error('Main database connection not established');
+    }
     return mainPool;
   }
 
-  // Check if pool already exists in cache - REUSE IT (FAST!)
+  // Check if pool already exists in cache
   if (connectionPools.has(databaseName)) {
     const pool = connectionPools.get(databaseName);
-    // If pool exists and is connected, return it immediately (NO VERIFICATION - FASTER)
+    // Check if pool is still connected
     if (pool && pool.connected) {
-      console.log(`⚡ Reusing cached connection pool for: ${databaseName}`);
       return pool;
     } else {
       // Remove stale connection
-      console.log(`⚠️ Cached pool is disconnected, removing from cache`);
       connectionPools.delete(databaseName);
     }
   }
 
-  // Create new connection pool for client database (only if not cached)
+  // Create new connection pool for client database
   try {
-    const clientDbConfig = {
+    const clientDbConfig: sql.config = {
       ...baseConfig,
       database: databaseName,
-      pool: {
-        max: 10, // Maximum pool size
-        min: 0,  // Minimum pool size
-        idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
-      },
-      options: {
-        ...baseConfig.options,
-        enableArithAbort: true,
-        requestTimeout: 30000, // 30 seconds timeout
-      }
     };
 
     // Use ConnectionPool instead of sql.connect() to create separate pools
     const pool = new sql.ConnectionPool(clientDbConfig);
     await pool.connect();
     connectionPools.set(databaseName, pool);
-    console.log(`✅ Created NEW connection pool for: ${databaseName} (cached for reuse)`);
+    console.log(`✅ Connected to client database: ${databaseName}`);
     
     // Skip table initialization - tables should already exist with data
     // Only initialize if explicitly needed (for new databases)
@@ -136,8 +147,12 @@ const getPoolForDatabase = async (databaseName) => {
 /**
  * Get the main database pool (for authentication)
  * @returns {sql.ConnectionPool} Main database connection pool
+ * @throws {Error} If main pool is not initialized
  */
-const getMainPool = () => {
+export const getMainPool = (): sql.ConnectionPool => {
+  if (!mainPool) {
+    throw new Error('Main database connection not established');
+  }
   return mainPool;
 };
 
@@ -146,16 +161,10 @@ const getMainPool = () => {
  * @param {string} databaseName - Name of the database
  * @returns {sql.ConnectionPool|null} Connection pool or null if not cached
  */
-const getPool = (databaseName = null) => {
+export const getPool = (databaseName: string | null = null): sql.ConnectionPool | null => {
   if (!databaseName) {
     return mainPool;
   }
   return connectionPools.get(databaseName) || mainPool;
 };
 
-module.exports = {
-  connectDB,
-  getMainPool,
-  getPool,
-  getPoolForDatabase,
-};

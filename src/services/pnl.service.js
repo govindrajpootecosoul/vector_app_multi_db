@@ -1,6 +1,27 @@
- const sql = require('mssql');
+const sql = require('mssql');
 const { getConnection } = require('../utils/database');
 const moment = require('moment');
+
+const RANGE_SYNONYMS = {
+  currentmonths: 'currentmonth',
+  currentmonth: 'currentmonth',
+  lastmonth: 'previousmonth',
+  previousmonth: 'previousmonth',
+  yeartodate: 'currentyear',
+  currentyear: 'currentyear',
+  lastyear: 'lastyear',
+};
+
+const NORMALIZED_RANGE_VALUES = new Set(Object.values(RANGE_SYNONYMS));
+const RANGE_HELP_TEXT = 'Valid range values: currentmonth, currentmonths, lastmonth, previousmonth, yeartodate, currentyear, lastyear';
+
+const normalizeRange = (range) => {
+  if (!range || typeof range !== 'string') {
+    return null;
+  }
+  const normalized = range.toLowerCase();
+  return RANGE_SYNONYMS[normalized] || normalized;
+};
 
 exports.getPnlData = async (req, res) => {
   try {
@@ -17,28 +38,52 @@ exports.getPnlData = async (req, res) => {
       cm3Type,
       sortOrder
     } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
+    const normalizedRange = normalizeRange(range);
+    
+    // Get database name from token
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
     if (!range && !date && !startMonth && !endMonth) {
       return res.status(400).json({
         status: 400,
-        message: "Provide a valid range parameter (currentmonths, lastmonth, yeartodate, lastyear) or date/startMonth-endMonth parameters.",
+        message: `${RANGE_HELP_TEXT} or provide date/startMonth-endMonth parameters.`,
         success: false,
         data: {
           code: "BAD_REQUEST",
           message: "range, date, startMonth, or endMonth is required",
-          details: "Provide a valid range parameter (currentmonths, lastmonth, yeartodate, lastyear) or date/startMonth-endMonth parameters."
+          details: `${RANGE_HELP_TEXT} or provide date/startMonth-endMonth parameters.`
         },
         timestamp: new Date().toISOString()
       });
     }
 
-    const pool = await getConnection();
+    if (range && !NORMALIZED_RANGE_VALUES.has(normalizedRange)) {
+      return res.status(400).json({
+        status: 400,
+        message: `Invalid range: ${range}. ${RANGE_HELP_TEXT}.`,
+        success: false,
+        data: {
+          code: "BAD_REQUEST",
+          message: `Invalid range: ${range}`,
+          details: RANGE_HELP_TEXT
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
 
-    // Build WHERE clause
-    let whereClause = 'client_id = @clientId';
+    const pool = await getConnection(req);
+
+    // Build WHERE clause (removed client_id - each database is client-specific)
+    let whereClause = '1=1';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
 
     // Basic filters
     if (sku) {
@@ -69,8 +114,8 @@ exports.getPnlData = async (req, res) => {
     if (date) {
       // Specific date (YYYY-MM)
       yearMonthFilter.push(date);
-    } else if (range) {
-      switch (range) {
+    } else if (normalizedRange) {
+      switch (normalizedRange) {
         case 'currentmonth':
           yearMonthFilter.push(now.format('YYYY-MM'));
           break;
@@ -93,12 +138,12 @@ exports.getPnlData = async (req, res) => {
         default:
           return res.status(400).json({
             status: 400,
-             message: "Provide a valid range parameter such as currentmonths, lastmonth, yeartodate, or lastyear.",
+            message: RANGE_HELP_TEXT,
              success: false,
             data: {
               code: "BAD_REQUEST",
               message: `Invalid range: ${range}`,
-              details: "Provide a valid range parameter such as currentmonths, lastmonth, yeartodate, or lastyear."
+              details: RANGE_HELP_TEXT
             },
             timestamp: new Date().toISOString()
           });
@@ -225,24 +270,39 @@ exports.getPnlExecutiveData = async (req, res) => {
       endMonth,
       cm3Type
     } = req.query;
+    const normalizedRange = normalizeRange(range);
 
     const clientId = req.user.client_id;
 
     if (!range && !date && !startMonth && !endMonth) {
       return res.status(400).json({
         status: 400,
-        message: "Provide a valid range parameter (currentmonth, previousmonth, currentyear, lastyear) or date/startMonth-endMonth parameters.",
+        message: `${RANGE_HELP_TEXT} or provide date/startMonth-endMonth parameters.`,
         success: false,
         data: {
           code: "BAD_REQUEST",
           message: "range, date, startMonth, or endMonth is required",
-          details: "Provide a valid range parameter (currentmonth, previousmonth, currentyear, lastyear) or date/startMonth-endMonth parameters."
+          details: `${RANGE_HELP_TEXT} or provide date/startMonth-endMonth parameters.`
         },
         timestamp: new Date().toISOString()
       });
     }
 
-    const pool = await getConnection();
+    if (range && !NORMALIZED_RANGE_VALUES.has(normalizedRange)) {
+      return res.status(400).json({
+        status: 400,
+        message: `Invalid range: ${range}. ${RANGE_HELP_TEXT}.`,
+        success: false,
+        data: {
+          code: "BAD_REQUEST",
+          message: `Invalid range: ${range}`,
+          details: RANGE_HELP_TEXT
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const pool = await getConnection(req);
 
     // Date range filters
     const yearMonthFilter = [];
@@ -262,8 +322,8 @@ exports.getPnlExecutiveData = async (req, res) => {
       const dateMoment = moment(date, 'YYYY-MM');
       previousPeriodFilter.push(dateMoment.clone().subtract(1, 'month').format('YYYY-MM'));
       previousPeriodLabel = dateMoment.clone().subtract(1, 'month').format('YYYY-MM');
-    } else if (range) {
-      switch (range) {
+    } else if (normalizedRange) {
+      switch (normalizedRange) {
         case 'currentmonth':
           const currentMonthStr = now.format('YYYY-MM');
           const previousMonthStr = now.clone().subtract(1, 'month').format('YYYY-MM');
@@ -312,12 +372,12 @@ exports.getPnlExecutiveData = async (req, res) => {
         default:
           return res.status(400).json({
             status: 400,
-            message: "Provide a valid range parameter such as currentmonth, previousmonth, currentyear, or lastyear.",
+            message: RANGE_HELP_TEXT,
             success: false,
             data: {
               code: "BAD_REQUEST",
               message: `Invalid range: ${range}`,
-              details: "Provide a valid range parameter such as currentmonth, previousmonth, currentyear, or lastyear."
+              details: RANGE_HELP_TEXT
             },
             timestamp: new Date().toISOString()
           });
@@ -350,9 +410,8 @@ exports.getPnlExecutiveData = async (req, res) => {
 
     // Helper function to build WHERE clause and execute query
     const executePnlQuery = async (periodFilter, periodLabel) => {
-      let whereClause = 'client_id = @clientId';
+      let whereClause = '1=1';
       const request = pool.request();
-      request.input('clientId', sql.VarChar, clientId);
 
       // Basic filters
       if (sku) {
@@ -482,15 +541,24 @@ exports.getPnlExecutiveData = async (req, res) => {
 
 exports.getPnlDropdownData = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
     const { country, platform } = req.query;
+    
+    // Get database name from token
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
-    const pool = await getConnection();
+    const pool = await getConnection(req);
 
-    // Build WHERE clause
-    let whereClause = 'client_id = @clientId';
+    // Build WHERE clause (removed client_id - each database is client-specific)
+    let whereClause = '1=1';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
 
     if (country && country.trim() !== '') {
       whereClause += ' AND country = @country';
@@ -504,11 +572,11 @@ exports.getPnlDropdownData = async (req, res) => {
     // SQL query to get distinct values
     const query = `
       SELECT
-        STRING_AGG(DISTINCT sku, ',') as skuList,
-        STRING_AGG(DISTINCT product_category, ',') as categoryList,
-        STRING_AGG(DISTINCT product_name, ',') as productNameList,
-        STRING_AGG(DISTINCT country, ',') as countryList,
-        STRING_AGG(DISTINCT platform, ',') as platformList
+        STRING_AGG(CAST(ISNULL(sku, '') AS NVARCHAR(MAX)), ',') as skuList,
+        STRING_AGG(CAST(ISNULL(product_category, '') AS NVARCHAR(MAX)), ',') as categoryList,
+        STRING_AGG(CAST(ISNULL(product_name, '') AS NVARCHAR(MAX)), ',') as productNameList,
+        STRING_AGG(CAST(ISNULL(country, '') AS NVARCHAR(MAX)), ',') as countryList,
+        STRING_AGG(CAST(ISNULL(platform, '') AS NVARCHAR(MAX)), ',') as platformList
       FROM std_pnl
       WHERE ${whereClause}
     `;
@@ -526,12 +594,18 @@ exports.getPnlDropdownData = async (req, res) => {
     const data = result.recordset[0];
 
     // Convert comma-separated strings to arrays
+    const toUniqueList = (csv) => {
+      if (!csv) return [];
+      const items = csv.split(',').map(item => item.trim()).filter(Boolean);
+      return Array.from(new Set(items));
+    };
+
     const dropdownData = {
-      skuList: data.skuList ? data.skuList.split(',').filter(item => item.trim() !== '') : [],
-      categoryList: data.categoryList ? data.categoryList.split(',').filter(item => item.trim() !== '') : [],
-      productNameList: data.productNameList ? data.productNameList.split(',').filter(item => item.trim() !== '') : [],
-      countryList: data.countryList ? data.countryList.split(',').filter(item => item.trim() !== '') : [],
-      platformList: data.platformList ? data.platformList.split(',').filter(item => item.trim() !== '') : []
+      skuList: toUniqueList(data.skuList),
+      categoryList: toUniqueList(data.categoryList),
+      productNameList: toUniqueList(data.productNameList),
+      countryList: toUniqueList(data.countryList),
+      platformList: toUniqueList(data.platformList)
     };
 
     res.json({

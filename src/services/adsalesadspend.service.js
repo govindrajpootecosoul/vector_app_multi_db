@@ -14,7 +14,16 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
       sku
     } = req.query;
 
-    const client_id = req.user.client_id;
+    // Get database name from token
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
     if (!filterType) {
       return res.status(400).json({
@@ -28,7 +37,7 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
       });
     }
 
-    const pool = getConnection();
+    const pool = await getConnection(req);
 
     const today = new Date();
     console.log('Today\'s date:', today.toISOString());
@@ -173,13 +182,13 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
     }
     }
 
-    // Build WHERE conditions
-    let whereConditions = [`client_id = '${client_id}'`];
+    // Build WHERE conditions (removed client_id - each database is client-specific)
+    let whereConditions = [];
     if (platform) whereConditions.push(`platform = '${platform}'`);
     if (country) whereConditions.push(`country = '${country}'`);
     if (sku) whereConditions.push(`sku = '${sku}'`);
 
-    const whereClause = whereConditions.join(' AND ');
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
     console.log('WHERE clause:', whereClause);
     console.log('Date range:', { currentStartMonth, currentEndMonth });

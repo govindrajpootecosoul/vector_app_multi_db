@@ -35,7 +35,7 @@
 //       });
 //     }
 
-//     const pool = getConnection();
+//     const pool = await getConnection(req);
 
 //     const today = new Date();
 //     console.log('Today\'s date:', today.toISOString());
@@ -203,7 +203,7 @@
 //     // Use purchase_date if provided, otherwise use filterType
 //     const effectiveFilterType = purchase_date || filterType;
 
-//     const pool = getConnection();
+//     const pool = await getConnection(req);
 
 //     const today = new Date();
 //     console.log('Today\'s date:', today.toISOString());
@@ -446,7 +446,7 @@
 //     const { platform, country } = req.query;
 //     const client_id = req.user.client_id;
 
-//     const pool = getConnection();
+//     const pool = await getConnection(req);
 
 //     // Build WHERE conditions
 //     let whereConditions = [`client_id = '${client_id}'`];
@@ -506,7 +506,16 @@ exports.getOrderListByDatabase = async (req, res) => {
       endMonth
     } = req.query;
 
-    const client_id = req.user.client_id;
+    // Get database name from token
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
     // Check if custom date range is provided, if not, require filterType
     const hasCustomRange = (startMonth && endMonth) || (fromDate && toDate);
@@ -525,7 +534,7 @@ exports.getOrderListByDatabase = async (req, res) => {
       });
     }
 
-    const pool = getConnection();
+    const pool = await getConnection(req);
 
     const today = new Date();
     console.log('Today\'s date:', today.toISOString());
@@ -609,15 +618,15 @@ exports.getOrderListByDatabase = async (req, res) => {
       }
     }
 
-    // Build WHERE conditions
-    let whereConditions = [`client_id = '${client_id}'`];
+    // Build WHERE conditions (removed client_id - each database is client-specific)
+    let whereConditions = [];
     if (sku) whereConditions.push(`sku IN (${sku.split(",").map(s => `'${s.trim()}'`).join(",")})`);
     if (product_category) whereConditions.push(`product_category = '${product_category}'`);
     if (product_name) whereConditions.push(`product_name = '${product_name}'`);
     if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
     if (country) whereConditions.push(`country LIKE '%${country}%'`);
 
-    const whereClause = whereConditions.join(' AND ');
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
     console.log('WHERE clause:', whereClause);
     console.log('Date range:', { currentStartDate, currentEndDate });
@@ -673,7 +682,15 @@ exports.getOrdersByDatabase = async (req, res) => {
       country
     } = req.query;
 
-    const client_id = req.user.client_id;
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
     const hasCustomRange = (startMonth && endMonth) || (fromDate && toDate);
 
@@ -691,7 +708,7 @@ exports.getOrdersByDatabase = async (req, res) => {
 
     const effectiveFilterType = purchase_date || filterType;
 
-    const pool = getConnection();
+    const pool = await getConnection(req);
 
     const today = new Date();
     const currentYear = today.getUTCFullYear();
@@ -767,7 +784,7 @@ exports.getOrdersByDatabase = async (req, res) => {
     }
 
     // Build WHERE conditions
-    let whereConditions = [`client_id = '${client_id}'`];
+    let whereConditions = [];
     if (sku) whereConditions.push(`sku IN (${sku.split(",").map(s => `'${s.trim()}'`).join(",")})`);
     if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
     if (state) whereConditions.push(`state = '${state}'`);
@@ -912,7 +929,7 @@ exports.getOrdersByDatabase = async (req, res) => {
 //     // Use purchase_date if provided, otherwise use filterType
 //     const effectiveFilterType = purchase_date || filterType;
 
-//     const pool = getConnection();
+//     const pool = await getConnection(req);
 
 //     const today = new Date();
 //     console.log('Today\'s date:', today.toISOString());
@@ -1148,12 +1165,21 @@ exports.getOrdersByDatabase = async (req, res) => {
 exports.getDropdownData = async (req, res) => {
   try {
     const { platform, country } = req.query;
-    const client_id = req.user.client_id;
 
-    const pool = getConnection();
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
+
+    const pool = await getConnection(req);
 
     // Build WHERE conditions
-    let whereConditions = [`client_id = '${client_id}'`];
+    let whereConditions = [];
     if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
     if (country) whereConditions.push(`country LIKE '%${country}%'`);
 

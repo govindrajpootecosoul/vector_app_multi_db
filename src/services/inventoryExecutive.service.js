@@ -79,14 +79,23 @@ const moment = require('moment'); // For date handling
 exports.getInventoryExecutiveData = async (req, res) => {
   try {
     const { country, platform } = req.query;
-    const clientId = req.user.client_id; // Get client_id from JWT token
+    
+    // Get database name from token
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
 
-    const pool = await getConnection();
+    const pool = await getConnection(req);
 
-    // Build WHERE clause for std_inventory
-    let whereClause = 'client_id = @clientId';
+    // Build WHERE clause (removed client_id - each database is client-specific)
+    let whereClause = '1=1';
     const request = pool.request();
-    request.input('clientId', sql.VarChar, clientId);
 
     if (country) {
       whereClause += ' AND country LIKE @country';
@@ -124,10 +133,9 @@ exports.getInventoryExecutiveData = async (req, res) => {
     // Calculate previous month in YYYY-MM format
     const previousMonth = moment().subtract(1, 'months').format('YYYY-MM');
 
-    // Fetch storage_fee from std_pnl for previous month
-    let pnlWhereClause = 'client_id = @clientId AND year_month = @previousMonth';
+    // Fetch storage_fee from std_pnl for previous month (removed client_id - each database is client-specific)
+    let pnlWhereClause = 'year_month = @previousMonth';
     const pnlRequest = pool.request();
-    pnlRequest.input('clientId', sql.VarChar, clientId);
     pnlRequest.input('previousMonth', sql.VarChar, previousMonth);
 
     if (country) {
