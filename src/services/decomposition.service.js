@@ -381,7 +381,7 @@ const getMonthRangesByFilterType = (filterType, options = {}) => {
   }
 };
 
-const fetchRowsForMonths = async (pool, sku, months) => {
+const fetchRowsForMonths = async (pool, sku, months, country = null, platform = null) => {
   if (!months.length) {
     return [];
   }
@@ -392,10 +392,22 @@ const fetchRowsForMonths = async (pool, sku, months) => {
     request.input(`month${idx}`, sql.VarChar, month);
   });
 
+  let whereClause = `sku = @sku AND year_month IN (${placeholders})`;
+  
+  if (country) {
+    whereClause += ' AND country = @country';
+    request.input('country', sql.VarChar, country);
+  }
+  
+  if (platform) {
+    whereClause += ' AND platform = @platform';
+    request.input('platform', sql.VarChar, platform);
+  }
+
   const query = `
     SELECT *
     FROM ${TABLE_NAME}
-    WHERE sku = @sku AND year_month IN (${placeholders})
+    WHERE ${whereClause}
     ORDER BY year_month ASC
   `;
 
@@ -411,7 +423,9 @@ exports.getSummary = async (req) => {
     fromMonth,
     toMonth,
     startMonth,
-    endMonth
+    endMonth,
+    country,
+    platform
   } = req.query;
 
   if (!sku || !filterType) {
@@ -433,8 +447,8 @@ exports.getSummary = async (req) => {
   const pool = await getConnection(req);
 
   const [previousRows, rangeRows] = await Promise.all([
-    fetchRowsForMonths(pool, sku, previousMonths),
-    fetchRowsForMonths(pool, sku, rangeMonths)
+    fetchRowsForMonths(pool, sku, previousMonths, country, platform),
+    fetchRowsForMonths(pool, sku, rangeMonths, country, platform)
   ]);
 
   if (!rangeRows.length) {
