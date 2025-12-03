@@ -9,7 +9,7 @@ const FIELD_MAP = {
   gvs: ['total_glance_views', 'Total Glance Views'],
   cvr: ['total_conversion_rate', 'Total_Conversion_rate'],
   asp: ['asp', 'ASP'],
-  osa: ['osa_inventory_availabilty_percent', 'OSA_Inventory_Availabilty%'],
+  osa: ['osa_inventory_availabilty_percent', 'OSA_Inventory_Availabilty%', 'osa_inventory_availability_percent', 'OSA_Inventory_Availability%', 'osa', 'OSA', 'inventory_availability_percent', 'instock_rate_percent', 'osa_percent', 'OSA_percent', 'osa_percentage', 'OSA_percentage'],
   organic_gvs: ['organic_views', 'Organic Views'],
   ad_gvs: ['ads_glance_views', 'Ads Glance Views'],
   add_to_cart: ['add_to_cart', 'Add_to_cart'],
@@ -50,8 +50,15 @@ const toFloat = (value) => {
 const resolveValue = (row, columnNames) => {
   const columns = Array.isArray(columnNames) ? columnNames : [columnNames];
   for (const col of columns) {
+    // Try exact match first
     if (row[col] !== undefined && row[col] !== null) {
       return row[col];
+    }
+    // Try case-insensitive match
+    const rowKeys = Object.keys(row);
+    const matchedKey = rowKeys.find(key => key.toLowerCase() === col.toLowerCase());
+    if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null) {
+      return row[matchedKey];
     }
   }
   return null;
@@ -76,7 +83,10 @@ const convertRowToJson = (row) => {
 const createEmptySummary = (sku = null) => {
   const summary = { sku, months: 0, currency_type: null };
   Object.keys(FIELD_MAP).forEach((key) => {
-    summary[key] = 0;
+    // Skip the raw 'discounting' field - we only use 'discounting_percentage'
+    if (key !== 'discounting') {
+      summary[key] = 0;
+    }
   });
   return summary;
 };
@@ -89,9 +99,13 @@ const aggregateData = (rows) => {
   const totals = createEmptySummary(rows[0].sku || rows[0].SKU || null);
   const averages = {};
   AVERAGE_FIELDS.forEach((key) => {
-    averages[key] = 0;
+    // Don't initialize discounting_percentage in averages - we'll use latest month's value
+    if (key !== 'discounting_percentage') {
+      averages[key] = 0;
+    }
   });
   let count = 0;
+  let latestDiscountingPercentage = null;
 
   for (const row of rows) {
     const data = convertRowToJson(row);
@@ -100,8 +114,18 @@ const aggregateData = (rows) => {
       if (key === 'CTR') {
         continue;
       }
+      // Skip the raw 'discounting' field - we only use 'discounting_percentage' (discounting_percent)
+      if (key === 'discounting') {
+        continue;
+      }
       const val = data[key] || 0;
-      if (AVERAGE_FIELDS.has(key)) {
+      if (key === 'discounting_percentage') {
+        // Store the latest discounting_percentage value instead of averaging
+        // Always update to get the last row's value (rows are ordered by year_month ASC)
+        // Get the raw value directly from the row to avoid any conversion issues
+        const rawValue = resolveValue(row, FIELD_MAP[key]);
+        latestDiscountingPercentage = rawValue !== null && rawValue !== undefined ? toFloat(rawValue) : val;
+      } else if (AVERAGE_FIELDS.has(key)) {
         averages[key] += val;
       } else {
         totals[key] = (totals[key] || 0) + val;
@@ -118,7 +142,54 @@ const aggregateData = (rows) => {
   }
 
   for (const [key, sum] of Object.entries(averages)) {
+    // Skip discounting_percentage - we'll set it from the latest month instead
+    if (key === 'discounting_percentage') {
+      continue;
+    }
     totals[key] = count ? +(sum / count).toFixed(2) : 0;
+  }
+
+  // Use the latest month's discounting_percentage value instead of average
+  // Get it directly from the last row to ensure we have the actual latest value
+  // This must be set AFTER averaging to override any averaged value
+  // IMPORTANT: Always use the last row's value, never average
+  if (rows.length > 0) {
+    const lastRow = rows[rows.length - 1];
+    
+    // Get the value directly from the database column 'discounting_percent'
+    // The database column is 'discounting_percent', not 'discounting_percentage'
+    let dbValue = null;
+    
+    // Try direct column access first (most common case)
+    if (lastRow.hasOwnProperty('discounting_percent')) {
+      dbValue = lastRow.discounting_percent;
+    } else {
+      // Try case-insensitive search
+      const rowKeys = Object.keys(lastRow);
+      const discountPercentKey = rowKeys.find(key => 
+        key.toLowerCase() === 'discounting_percent' || 
+        key.toLowerCase() === 'discountingpercent'
+      );
+      if (discountPercentKey) {
+        dbValue = lastRow[discountPercentKey];
+      }
+    }
+    
+    // Set the value - use the database value directly
+    if (dbValue !== null && dbValue !== undefined) {
+      // Convert to number, preserving negative values and 0
+      totals.discounting_percentage = toFloat(dbValue);
+    } else if (latestDiscountingPercentage !== null && latestDiscountingPercentage !== undefined) {
+      // Fallback to value captured during iteration
+      totals.discounting_percentage = latestDiscountingPercentage;
+    } else {
+      // Final fallback: get from converted data of last row
+      const lastData = convertRowToJson(lastRow);
+      totals.discounting_percentage = lastData.discounting_percentage !== undefined ? lastData.discounting_percentage : 0;
+    }
+  } else {
+    // If no rows, set to 0
+    totals.discounting_percentage = 0;
   }
 
   totals.sku = totals.sku || rows[0].sku || rows[0].SKU || null;
@@ -175,7 +246,7 @@ const buildDecompositionResponse = (summary) => {
             value: Math.round(safeSummary.osa || 0),
             valueUnit: '%',
             cardLabel: 'OSA',
-            percentage: 0,
+            percentage: safeSummary.osa_percentage || 0,
             nodeLabel: 'Availability',
             children: []
           },
@@ -243,10 +314,10 @@ const buildDecompositionResponse = (summary) => {
           },
           {
             id: 10,
-            value: safeSummary.discounting || 0,
+            value: safeSummary.discounting_percentage || 0,
             valueUnit: '%',
             cardLabel: 'Discounting',
-            percentage: safeSummary.discounting_percentage || 0,
+            percentage: safeSummary.discounting_percentage_percentage || 0,
             nodeLabel: 'Discounting',
             children: []
           },

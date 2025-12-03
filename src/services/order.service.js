@@ -489,7 +489,191 @@
 
 
 const sql = require('mssql');
+const https = require('https');
+const logger = require('../utils/logger');
 const { getConnection } = require('../utils/database');
+
+const FRANKFURTER_API_BASE = 'https://api.frankfurter.dev';
+const supportedCurrencies = new Set(['GBP', 'EUR']);
+const exchangeRateCache = new Map();
+const countryCurrencyFallback = {
+  UK: 'GBP',
+  DE: 'EUR',
+};
+
+const buildDateFromYearMonth = (yearMonth) => {
+  if (!yearMonth || typeof yearMonth !== 'string') {
+    throw new Error('Invalid yearMonth format');
+  }
+  const [yearStr, monthStr] = yearMonth.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+    throw new Error(`Invalid yearMonth value: ${yearMonth}`);
+  }
+  return `${year}-${month.toString().padStart(2, '0')}-01`;
+};
+
+const frankfurterRequest = (path) => {
+  const url = `${FRANKFURTER_API_BASE}${path}`;
+
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed);
+          } catch (error) {
+            reject(new Error(`Failed to parse Frankfurter response: ${error.message}`));
+          }
+        } else {
+          reject(new Error(`Frankfurter API error (${res.statusCode}): ${data}`));
+        }
+      });
+    });
+
+    request.on('error', (error) => reject(error));
+    request.setTimeout(5000, () => {
+      request.destroy(new Error('Frankfurter API request timed out'));
+    });
+  });
+};
+
+const fetchFrankfurterRates = async (currency, yearMonth) => {
+  const date = buildDateFromYearMonth(yearMonth);
+  const paths = [
+    `/latest?from=${currency}&to=USD&date=${date}`,
+    `/${date}?from=${currency}&to=USD`,
+    `/v1/${date}?from=${currency}&to=USD`,
+  ];
+
+  let lastError = null;
+  for (const path of paths) {
+    try {
+      const response = await frankfurterRequest(path);
+      return response;
+    } catch (error) {
+      lastError = error;
+      logger.warn(`Frankfurter request failed for ${path}: ${error.message}`);
+    }
+  }
+
+  throw lastError || new Error('Unable to fetch exchange rate');
+};
+
+const getExchangeRate = async (currency, yearMonth) => {
+  if (!currency) {
+    throw new Error('Currency is required for FX conversion');
+  }
+
+  const normalizedCurrency = currency.toUpperCase();
+  if (!supportedCurrencies.has(normalizedCurrency)) {
+    throw new Error(`Unsupported currency: ${currency}`);
+  }
+
+  const cacheKey = `${normalizedCurrency}-${yearMonth}`;
+  if (exchangeRateCache.has(cacheKey)) {
+    return exchangeRateCache.get(cacheKey);
+  }
+
+  const response = await fetchFrankfurterRates(normalizedCurrency, yearMonth);
+  const rate = response?.rates?.USD;
+  if (!rate) {
+    throw new Error(`USD rate missing for ${currency} ${yearMonth}`);
+  }
+
+  exchangeRateCache.set(cacheKey, rate);
+  return rate;
+};
+
+const computeMonthlyTotals = async (breakdown, currencyLookup) => {
+  const totals = {};
+
+  for (const countryKey of Object.keys(breakdown)) {
+    totals[countryKey] = {};
+    const entries = breakdown[countryKey];
+    const currency = (currencyLookup[countryKey] || countryCurrencyFallback[countryKey] || '').toUpperCase();
+
+    entries.forEach((entry) => {
+      const yearMonth = entry.date.slice(0, 7);
+      if (!totals[countryKey][yearMonth]) {
+        totals[countryKey][yearMonth] = {
+          currency,
+          local: 0,
+          usd: null,
+          rate: null,
+        };
+      }
+      totals[countryKey][yearMonth].local += entry.totalSales;
+    });
+
+    if (!supportedCurrencies.has(currency)) {
+      continue;
+    }
+
+    for (const yearMonth of Object.keys(totals[countryKey])) {
+      try {
+        const rate = await getExchangeRate(currency, yearMonth);
+        totals[countryKey][yearMonth].rate = rate;
+        totals[countryKey][yearMonth].usd = Number((totals[countryKey][yearMonth].local * rate).toFixed(2));
+      } catch (error) {
+        logger.error(`FX conversion failed for ${countryKey} (${yearMonth}): ${error.message}`);
+        totals[countryKey][yearMonth].usd = null;
+      }
+    }
+  }
+
+  return totals;
+};
+
+const summarizeUsdTotals = (monthlyTotals) => {
+  if (!monthlyTotals) {
+    return { byCountry: {}, totalUsd: null };
+  }
+
+  const byCountry = {};
+  let totalUsd = 0;
+
+  Object.keys(monthlyTotals).forEach((countryKey) => {
+    let countryUsd = 0;
+    Object.values(monthlyTotals[countryKey] || {}).forEach((period) => {
+      if (typeof period.usd === 'number') {
+        countryUsd += period.usd;
+      }
+    });
+    byCountry[countryKey] = Number(countryUsd.toFixed(2));
+    totalUsd += countryUsd;
+  });
+
+  return {
+    byCountry,
+    totalUsd: Number(totalUsd.toFixed(2)),
+  };
+};
+
+const applyUsdToBreakdown = (breakdown, monthlyTotals) => {
+  if (!monthlyTotals) return breakdown;
+
+  Object.keys(breakdown).forEach(countryKey => {
+    const entries = breakdown[countryKey] || [];
+    entries.forEach(entry => {
+      const yearMonth = entry.date.slice(0, 7);
+      const rate = monthlyTotals?.[countryKey]?.[yearMonth]?.rate;
+      if (typeof rate === 'number') {
+        entry.totalSalesUSD = Number((entry.totalSales * rate).toFixed(2));
+      } else {
+        entry.totalSalesUSD = null;
+      }
+    });
+  });
+
+  return breakdown;
+};
 
 exports.getOrderListByDatabase = async (req, res) => {
   try {
@@ -693,8 +877,10 @@ exports.getOrdersByDatabase = async (req, res) => {
     req.databaseName = databaseName;
 
     const hasCustomRange = (startMonth && endMonth) || (fromDate && toDate);
+    const allowDateSkip = req.skipOrdersDateRange === true;
+    const groupByCountryDates = req.groupOrdersByCountryDates === true;
 
-    if (!hasCustomRange && !filterType) {
+    if (!allowDateSkip && !hasCustomRange && !filterType) {
       return res.status(400).json({
         status: 400,
         error: {
@@ -744,7 +930,7 @@ exports.getOrdersByDatabase = async (req, res) => {
       const duration = (currentEndDate - currentStartDate) / (1000 * 60 * 60 * 24) + 1;
       previousEndDate = new Date(currentStartDate.getTime() - 1);
       previousStartDate = new Date(previousEndDate.getTime() - (duration - 1) * 86400000);
-    } else {
+    } else if (effectiveFilterType) {
       switch (effectiveFilterType) {
         case "currentmonth":
           currentStartDate = new Date(Date.UTC(currentYear, currentMonth, 1));
@@ -781,6 +967,11 @@ exports.getOrdersByDatabase = async (req, res) => {
             timestamp: new Date().toISOString()
           });
       }
+    } else if (allowDateSkip) {
+      currentStartDate = null;
+      currentEndDate = null;
+      previousStartDate = null;
+      previousEndDate = null;
     }
 
     // Build WHERE conditions
@@ -790,68 +981,148 @@ exports.getOrdersByDatabase = async (req, res) => {
     if (state) whereConditions.push(`state = '${state}'`);
     if (city) whereConditions.push(`city = '${city}'`);
     if (country) whereConditions.push(`country LIKE '%${country}%'`);
-    const whereClause = whereConditions.join(' AND ');
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
-    // SQL query for current period — cast to DATE to ignore time
-    const currentQuery = `
-      SELECT
-        CAST(purchase_date AS DATE) AS purchase_date,
-        SUM(CAST(quantity AS INT)) AS totalQuantity,
-        SUM(CAST(total_sales AS FLOAT)) AS totalSales,
-        COUNT(DISTINCT order_id) AS orderCount
-      FROM std_orders
-      WHERE ${whereClause} 
+    const currentDateCondition = (currentStartDate && currentEndDate)
+      ? `
         AND CAST(purchase_date AS DATE) >= @currentStartDate 
         AND CAST(purchase_date AS DATE) <= @currentEndDate
-      GROUP BY CAST(purchase_date AS DATE)
-      ORDER BY purchase_date
-    `;
+      `
+      : '';
 
-    const currentResult = await pool.request()
-      .input('currentStartDate', sql.Date, currentStartDate)
-      .input('currentEndDate', sql.Date, currentEndDate)
-      .query(currentQuery);
+    let currentQuery;
+    const countryCurrencyLookup = {};
+    if (groupByCountryDates) {
+      currentQuery = `
+        SELECT
+          ISNULL(country, 'Unknown') AS country,
+          CAST(purchase_date AS DATE) AS purchase_date,
+          MAX(currency) AS currency,
+          SUM(CAST(quantity AS INT)) AS totalQuantity,
+          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+          COUNT(DISTINCT order_id) AS orderCount
+        FROM std_orders
+        WHERE ${whereClause}
+        ${currentDateCondition}
+        GROUP BY ISNULL(country, 'Unknown'), CAST(purchase_date AS DATE)
+        ORDER BY country, purchase_date
+      `;
+    } else {
+      currentQuery = `
+        SELECT
+          CAST(purchase_date AS DATE) AS purchase_date,
+          MAX(currency) AS currency,
+          SUM(CAST(quantity AS INT)) AS totalQuantity,
+          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+          COUNT(DISTINCT order_id) AS orderCount
+        FROM std_orders
+        WHERE ${whereClause}
+        ${currentDateCondition}
+        GROUP BY CAST(purchase_date AS DATE)
+        ORDER BY purchase_date
+      `;
+    }
+
+    const currentRequest = pool.request();
+    if (currentStartDate && currentEndDate) {
+      currentRequest.input('currentStartDate', sql.Date, currentStartDate);
+      currentRequest.input('currentEndDate', sql.Date, currentEndDate);
+    }
+    const currentResult = await currentRequest.query(currentQuery);
 
     let breakdown = {}, totalQuantity = 0, totalSales = 0, totalOrders = 0;
 
     currentResult.recordset.forEach(row => {
-      const date = row.purchase_date.toISOString().split('T')[0];
-      breakdown[date] = {
-        date,
-        totalQuantity: parseInt(row.totalQuantity) || 0,
-        totalSales: parseFloat(row.totalSales) || 0,
-        orderCount: parseInt(row.orderCount) || 0,
-        aov: 0
-      };
-      totalQuantity += breakdown[date].totalQuantity;
-      totalSales += breakdown[date].totalSales;
-      totalOrders += breakdown[date].orderCount;
+      if (groupByCountryDates) {
+        const countryKey = row.country || 'Unknown';
+        const dateKey = row.purchase_date instanceof Date
+          ? row.purchase_date.toISOString().split('T')[0]
+          : new Date(row.purchase_date).toISOString().split('T')[0];
+        const rowCurrency = (row.currency || countryCurrencyFallback[countryKey] || '').toUpperCase();
+
+        if (!breakdown[countryKey]) {
+          breakdown[countryKey] = [];
+        }
+        if (rowCurrency && !countryCurrencyLookup[countryKey]) {
+          countryCurrencyLookup[countryKey] = rowCurrency;
+        }
+
+        const entry = {
+          date: dateKey,
+          totalQuantity: parseInt(row.totalQuantity) || 0,
+          totalSales: parseFloat(row.totalSales) || 0,
+          orderCount: parseInt(row.orderCount) || 0,
+          aov: 0
+        };
+
+        breakdown[countryKey].push(entry);
+        totalQuantity += entry.totalQuantity;
+        totalSales += entry.totalSales;
+        totalOrders += entry.orderCount;
+      } else {
+        const key = row.purchase_date instanceof Date
+          ? row.purchase_date.toISOString().split('T')[0]
+          : new Date(row.purchase_date).toISOString().split('T')[0];
+
+        breakdown[key] = {
+          date: key,
+          totalQuantity: parseInt(row.totalQuantity) || 0,
+          totalSales: parseFloat(row.totalSales) || 0,
+          orderCount: parseInt(row.orderCount) || 0,
+          aov: 0
+        };
+        totalQuantity += breakdown[key].totalQuantity;
+        totalSales += breakdown[key].totalSales;
+        totalOrders += breakdown[key].orderCount;
+      }
     });
 
-    Object.keys(breakdown).forEach(key => {
-      const item = breakdown[key];
-      item.aov = item.orderCount > 0 ? (item.totalSales / item.orderCount) : 0;
-      item.aov = Number(item.aov.toFixed(2));
-    });
+    let monthlyTotals = null;
+    let totalSalesUsdSummary = null;
+    if (groupByCountryDates) {
+      Object.keys(breakdown).forEach(countryKey => {
+        breakdown[countryKey].forEach(item => {
+          item.aov = item.orderCount > 0 ? Number((item.totalSales / item.orderCount).toFixed(2)) : 0;
+        });
+        breakdown[countryKey].sort((a, b) => new Date(a.date) - new Date(b.date));
+      });
+      monthlyTotals = await computeMonthlyTotals(breakdown, countryCurrencyLookup);
+      applyUsdToBreakdown(breakdown, monthlyTotals);
+      totalSalesUsdSummary = summarizeUsdTotals(monthlyTotals);
+    } else {
+      Object.keys(breakdown).forEach(key => {
+        const item = breakdown[key];
+        item.aov = item.orderCount > 0 ? (item.totalSales / item.orderCount) : 0;
+        item.aov = Number(item.aov.toFixed(2));
+      });
+    }
 
-    // SQL query for previous period
-    const previousQuery = `
-      SELECT
-        SUM(CAST(quantity AS INT)) AS totalQuantity,
-        SUM(CAST(total_sales AS FLOAT)) AS totalSales,
-        COUNT(DISTINCT order_id) AS orderCount
-      FROM std_orders
-      WHERE ${whereClause} 
+    let previous = { totalQuantity: 0, totalSales: 0, orderCount: 0 };
+    const previousDateCondition = (previousStartDate && previousEndDate)
+      ? `
         AND CAST(purchase_date AS DATE) >= @previousStartDate 
         AND CAST(purchase_date AS DATE) <= @previousEndDate
-    `;
+      `
+      : '';
 
-    const previousResult = await pool.request()
-      .input('previousStartDate', sql.Date, previousStartDate)
-      .input('previousEndDate', sql.Date, previousEndDate)
-      .query(previousQuery);
+    if (previousDateCondition) {
+      const previousQuery = `
+        SELECT
+          SUM(CAST(quantity AS INT)) AS totalQuantity,
+          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+          COUNT(DISTINCT order_id) AS orderCount
+        FROM std_orders
+        WHERE ${whereClause}
+        ${previousDateCondition}
+      `;
 
-    const previous = previousResult.recordset[0] || { totalQuantity: 0, totalSales: 0, orderCount: 0 };
+      const previousRequest = pool.request()
+        .input('previousStartDate', sql.Date, previousStartDate)
+        .input('previousEndDate', sql.Date, previousEndDate);
+
+      const previousResult = await previousRequest.query(previousQuery);
+      previous = previousResult.recordset[0] || { totalQuantity: 0, totalSales: 0, orderCount: 0 };
+    }
 
     const getPercentChange = (curr, prev) => {
       if (prev === 0) return "N/A";
@@ -862,28 +1133,38 @@ exports.getOrdersByDatabase = async (req, res) => {
     const currentAOV = totalOrders > 0 ? totalSales / totalOrders : 0;
     const previousAOV = previous.orderCount > 0 ? previous.totalSales / previous.orderCount : 0;
 
+    const responseData = {
+      totalQuantity,
+      totalSales,
+      totalSalesUSD: groupByCountryDates ? (totalSalesUsdSummary?.totalUsd || null) : null,
+      totalOrders,
+      aov: currentAOV.toFixed(2),
+      items: groupByCountryDates
+        ? breakdown
+        : Object.values(breakdown).sort((a, b) => new Date(a.date) - new Date(b.date)),
+      comparison: {
+        currentPeriod: { startDate: currentStartDate || null, endDate: currentEndDate || null },
+        previousPeriod: { startDate: previousStartDate || null, endDate: previousEndDate || null },
+        previousTotalQuantity: previous.totalQuantity,
+        previousTotalSales: previous.totalSales,
+        previousTotalOrders: previous.orderCount,
+        previousAOV: previousAOV.toFixed(2),
+        quantityChangePercent: getPercentChange(totalQuantity, previous.totalQuantity),
+        salesChangePercent: getPercentChange(totalSales, previous.totalSales),
+        ordersChangePercent: getPercentChange(totalOrders, previous.orderCount),
+        aovChangePercent: getPercentChange(currentAOV, previousAOV),
+      }
+    };
+
+    if (groupByCountryDates) {
+      responseData.monthlyTotals = monthlyTotals;
+      responseData.totalSalesByCountryUSD = totalSalesUsdSummary?.byCountry || {};
+    }
+
     res.json({
       success: true,
       message: 'Orders retrieved successfully',
-      data: {
-        totalQuantity,
-        totalSales,
-        totalOrders,
-        aov: currentAOV.toFixed(2),
-        items: Object.values(breakdown).sort((a, b) => new Date(a.date) - new Date(b.date)),
-        comparison: {
-          currentPeriod: { startDate: currentStartDate, endDate: currentEndDate },
-          previousPeriod: { startDate: previousStartDate, endDate: previousEndDate },
-          previousTotalQuantity: previous.totalQuantity,
-          previousTotalSales: previous.totalSales,
-          previousTotalOrders: previous.orderCount,
-          previousAOV: previousAOV.toFixed(2),
-          quantityChangePercent: getPercentChange(totalQuantity, previous.totalQuantity),
-          salesChangePercent: getPercentChange(totalSales, previous.totalSales),
-          ordersChangePercent: getPercentChange(totalOrders, previous.orderCount),
-          aovChangePercent: getPercentChange(currentAOV, previousAOV),
-        }
-      },
+      data: responseData, 
     });
 
   } catch (error) {

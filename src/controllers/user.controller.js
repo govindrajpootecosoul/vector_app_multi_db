@@ -103,10 +103,26 @@ const getOrdersData = async (req, res) => {
   }
 };
 
+const getOrdersExecutiveallData = async (req, res) => {
+  try {
+    // Allow ordersExecutiveall to fetch data even when filterType isn't provided
+    req.skipOrdersDateRange = true;
+    req.groupOrdersByCountryDates = true;
+    await orderService.getOrdersByDatabase(req, res);
+  } catch (error) {
+    logger.error(`Get ordersExecutiveall data error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 module.exports = {
   login,
   signup,
   getUserDetails,
   getClientData,
   getOrdersData,
+  getOrdersExecutiveallData,
 };
