@@ -3,6 +3,7 @@ const { getConnection } = require('../utils/database');
 const moment = require('moment');
 
 const RANGE_SYNONYMS = {
+  customrange: 'customrange',
   currentmonths: 'currentmonth',
   currentmonth: 'currentmonth',
   lastmonth: 'previousmonth',
@@ -13,7 +14,14 @@ const RANGE_SYNONYMS = {
 };
 
 const NORMALIZED_RANGE_VALUES = new Set(Object.values(RANGE_SYNONYMS));
-const RANGE_HELP_TEXT = 'Valid range values: currentmonth, currentmonths, lastmonth, previousmonth, yeartodate, currentyear, lastyear';
+const RANGE_HELP_TEXT = 'Valid range values: currentmonth, currentmonths, lastmonth, previousmonth, yeartodate, currentyear, lastyear, customrange';
+
+// Accept both legacy YYYY-MM and new MM-YYYY month inputs
+const parseMonthInput = (value) => {
+  if (!value) return null;
+  const parsed = moment(value, ['YYYY-MM', 'MM-YYYY'], true);
+  return parsed.isValid() ? parsed : null;
+};
 
 const normalizeRange = (range) => {
   if (!range || typeof range !== 'string') {
@@ -114,6 +122,27 @@ exports.getPnlData = async (req, res) => {
     if (date) {
       // Specific date (YYYY-MM)
       yearMonthFilter.push(date);
+    } else if (normalizedRange === 'customrange') {
+      const start = parseMonthInput(startMonth);
+      const end = parseMonthInput(endMonth);
+      if (!start || !end) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Invalid startMonth or endMonth format. Use MM-YYYY.',
+          success: false,
+          data: {
+            code: "BAD_REQUEST",
+            message: "Invalid startMonth or endMonth format. Use MM-YYYY.",
+            details: "Provide startMonth and endMonth in MM-YYYY format when range=customrange."
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+      let current = start.clone();
+      while (current.isSameOrBefore(end)) {
+        yearMonthFilter.push(current.format('YYYY-MM'));
+        current.add(1, 'month');
+      }
     } else if (normalizedRange) {
       switch (normalizedRange) {
         case 'currentmonth':
@@ -150,8 +179,21 @@ exports.getPnlData = async (req, res) => {
       }
     } else if (startMonth && endMonth) {
       // Custom range
-      const start = moment(startMonth, 'YYYY-MM');
-      const end = moment(endMonth, 'YYYY-MM');
+      const start = parseMonthInput(startMonth);
+      const end = parseMonthInput(endMonth);
+      if (!start || !end) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Invalid startMonth or endMonth format. Use MM-YYYY.',
+          success: false,
+          data: {
+            code: "BAD_REQUEST",
+            message: "Invalid startMonth or endMonth format. Use MM-YYYY.",
+            details: "Provide startMonth and endMonth in MM-YYYY format when using custom range."
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
       let current = start.clone();
       while (current.isSameOrBefore(end)) {
         yearMonthFilter.push(current.format('YYYY-MM'));
@@ -322,6 +364,44 @@ exports.getPnlExecutiveData = async (req, res) => {
       const dateMoment = moment(date, 'YYYY-MM');
       previousPeriodFilter.push(dateMoment.clone().subtract(1, 'month').format('YYYY-MM'));
       previousPeriodLabel = dateMoment.clone().subtract(1, 'month').format('YYYY-MM');
+    } else if (normalizedRange === 'customrange') {
+      const start = parseMonthInput(startMonth);
+      const end = parseMonthInput(endMonth);
+
+      if (!start || !end) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Invalid startMonth or endMonth format. Use MM-YYYY.',
+          success: false,
+          data: {
+            code: "BAD_REQUEST",
+            message: "Invalid startMonth or endMonth format. Use MM-YYYY.",
+            details: "Provide startMonth and endMonth in MM-YYYY format when range=customrange."
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      let current = start.clone();
+      while (current.isSameOrBefore(end)) {
+        currentPeriodFilter.push(current.format('YYYY-MM'));
+        current.add(1, 'month');
+      }
+
+      currentPeriodLabel = `${start.format('YYYY-MM')} to ${end.format('YYYY-MM')}`;
+
+      // Calculate previous period (same duration before start date)
+      const duration = end.diff(start, 'months') + 1;
+      const prevStart = start.clone().subtract(duration, 'months');
+      const prevEnd = start.clone().subtract(1, 'months');
+
+      let prevCurrent = prevStart.clone();
+      while (prevCurrent.isSameOrBefore(prevEnd)) {
+        previousPeriodFilter.push(prevCurrent.format('YYYY-MM'));
+        prevCurrent.add(1, 'month');
+      }
+
+      previousPeriodLabel = `${prevStart.format('YYYY-MM')} to ${prevEnd.format('YYYY-MM')}`;
     } else if (normalizedRange) {
       switch (normalizedRange) {
         case 'currentmonth':
@@ -382,17 +462,32 @@ exports.getPnlExecutiveData = async (req, res) => {
             timestamp: new Date().toISOString()
           });
       }
-    } else if (startMonth && endMonth) {
-      // Custom range
-      const start = moment(startMonth, 'YYYY-MM');
-      const end = moment(endMonth, 'YYYY-MM');
+    } else if (normalizedRange === 'customrange' || (startMonth && endMonth)) {
+      // Custom range (new format MM-YYYY preferred)
+      const start = parseMonthInput(startMonth);
+      const end = parseMonthInput(endMonth);
+
+      if (!start || !end) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Invalid startMonth or endMonth format. Use MM-YYYY.',
+          success: false,
+          data: {
+            code: "BAD_REQUEST",
+            message: "Invalid startMonth or endMonth format. Use MM-YYYY.",
+            details: "Provide startMonth and endMonth in MM-YYYY format when range=customrange."
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
       let current = start.clone();
       while (current.isSameOrBefore(end)) {
         currentPeriodFilter.push(current.format('YYYY-MM'));
         current.add(1, 'month');
       }
 
-      currentPeriodLabel = `${startMonth} to ${endMonth}`;
+      currentPeriodLabel = `${start.format('YYYY-MM')} to ${end.format('YYYY-MM')}`;
 
       // Calculate previous period (same duration before start date)
       const duration = end.diff(start, 'months') + 1;
