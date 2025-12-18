@@ -967,6 +967,445 @@ const fetchAdData = async (req, res, pool) => {
   });
 };
 
+// Helper function for monthly sales data
+const fetchMonthlySalesData = async (req, res, pool) => {
+  const {
+    sku,
+    productName,
+    category,
+    city,
+    state,
+    purchaseHour,
+    startMonth,
+    endMonth,
+    filterType = "previousmonth",
+    country,
+    platform
+  } = req.query;
+
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges(req.query);
+
+  // Build WHERE conditions (same as fetchSalesData)
+  let whereConditions = [];
+  if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
+  if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
+  if (category) whereConditions.push(`product_category = '${category}'`);
+  if (city) whereConditions.push(`city = '${city}'`);
+  if (state) whereConditions.push(`state = '${state}'`);
+  if (purchaseHour !== undefined) whereConditions.push(`purchase_hour = ${parseInt(purchaseHour)}`);
+  if (country) whereConditions.push(`country LIKE '%${country}%'`);
+  if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  // Current period query - group by month
+  const currentWhere = [...whereConditions, `purchase_date >= '${formatDate(startDateObj)}' AND purchase_date <= '${formatDate(endDateObj)}'`];
+  const currentQuery = `
+    SELECT
+      FORMAT(purchase_date, 'yyyy-MM') as "purchase-date",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${currentWhere.join(' AND ')}
+    GROUP BY FORMAT(purchase_date, 'yyyy-MM')
+    ORDER BY FORMAT(purchase_date, 'yyyy-MM')
+  `;
+
+  // Previous period query - group by month
+  const prevWhere = [...whereConditions, `purchase_date >= '${formatDate(prevStartDateObj)}' AND purchase_date <= '${formatDate(prevEndDateObj)}'`];
+  const prevQuery = `
+    SELECT
+      FORMAT(purchase_date, 'yyyy-MM') as "purchase-date",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${prevWhere.join(' AND ')}
+    GROUP BY FORMAT(purchase_date, 'yyyy-MM')
+    ORDER BY FORMAT(purchase_date, 'yyyy-MM')
+  `;
+
+  const currentResult = await pool.request().query(currentQuery);
+  const prevResult = await pool.request().query(prevQuery);
+
+  res.json({
+    success: true,
+    message: 'Monthly sales data retrieved successfully',
+    data: {
+      current: currentResult.recordset,
+      previous: prevResult.recordset
+    },
+    filters: {
+      dateRange: {
+        current: {
+          start: formatDate(startDateObj),
+          end: formatDate(endDateObj)
+        },
+        previous: {
+          start: formatDate(prevStartDateObj),
+          end: formatDate(prevEndDateObj)
+        }
+      },
+      appliedFilters: {
+        sku,
+        productName,
+        category,
+        city,
+        state,
+        purchaseHour,
+        startMonth,
+        endMonth,
+        country,
+        platform,
+        filterType
+      }
+    }
+  });
+};
+
+// Helper function for time trend (hour-wise sales)
+const fetchTimeTrend = async (req, res, pool) => {
+  const {
+    sku,
+    productName,
+    category,
+    city,
+    state,
+    purchaseHour,
+    startMonth,
+    endMonth,
+    filterType = "previousmonth",
+    country,
+    platform
+  } = req.query;
+
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges(req.query);
+
+  // Build WHERE conditions (same as fetchSalesData)
+  let whereConditions = [];
+  if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
+  if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
+  if (category) whereConditions.push(`product_category = '${category}'`);
+  if (city) whereConditions.push(`city = '${city}'`);
+  if (state) whereConditions.push(`state = '${state}'`);
+  if (purchaseHour !== undefined) whereConditions.push(`purchase_hour = ${parseInt(purchaseHour)}`);
+  if (country) whereConditions.push(`country LIKE '%${country}%'`);
+  if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  // Current period query - group by hour
+  const currentWhere = [...whereConditions, `purchase_date >= '${formatDate(startDateObj)}' AND purchase_date <= '${formatDate(endDateObj)}'`];
+  const currentQuery = `
+    SELECT
+      purchase_hour as "purchase-hour",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${currentWhere.join(' AND ')}
+    GROUP BY purchase_hour
+    ORDER BY purchase_hour
+  `;
+
+  // Previous period query - group by hour
+  const prevWhere = [...whereConditions, `purchase_date >= '${formatDate(prevStartDateObj)}' AND purchase_date <= '${formatDate(prevEndDateObj)}'`];
+  const prevQuery = `
+    SELECT
+      purchase_hour as "purchase-hour",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${prevWhere.join(' AND ')}
+    GROUP BY purchase_hour
+    ORDER BY purchase_hour
+  `;
+
+  const currentResult = await pool.request().query(currentQuery);
+  const prevResult = await pool.request().query(prevQuery);
+
+  res.json({
+    success: true,
+    message: 'Time trend data retrieved successfully',
+    data: {
+      current: currentResult.recordset,
+      previous: prevResult.recordset
+    },
+    filters: {
+      dateRange: {
+        current: {
+          start: formatDate(startDateObj),
+          end: formatDate(endDateObj)
+        },
+        previous: {
+          start: formatDate(prevStartDateObj),
+          end: formatDate(prevEndDateObj)
+        }
+      },
+      appliedFilters: {
+        sku,
+        productName,
+        category,
+        city,
+        state,
+        purchaseHour,
+        startMonth,
+        endMonth,
+        country,
+        platform,
+        filterType
+      }
+    }
+  });
+};
+
+// Helper function for top 5 state sales
+const fetchTop5StateSales = async (req, res, pool) => {
+  const {
+    sku,
+    productName,
+    category,
+    city,
+    state,
+    purchaseHour,
+    startMonth,
+    endMonth,
+    filterType = "previousmonth",
+    country,
+    platform
+  } = req.query;
+
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges(req.query);
+
+  // Build WHERE conditions (same as fetchSalesData)
+  let whereConditions = [];
+  if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
+  if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
+  if (category) whereConditions.push(`product_category = '${category}'`);
+  if (city) whereConditions.push(`city = '${city}'`);
+  if (state) whereConditions.push(`state = '${state}'`);
+  if (purchaseHour !== undefined) whereConditions.push(`purchase_hour = ${parseInt(purchaseHour)}`);
+  if (country) whereConditions.push(`country LIKE '%${country}%'`);
+  if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  // Current period query - top 5 states by sales
+  const currentWhere = [...whereConditions, `purchase_date >= '${formatDate(startDateObj)}' AND purchase_date <= '${formatDate(endDateObj)}'`];
+  const currentQuery = `
+    SELECT TOP 5
+      state as "State",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${currentWhere.join(' AND ')}
+    GROUP BY state
+    ORDER BY SUM(CAST(total_sales AS FLOAT)) DESC
+  `;
+
+  // First, get current period top 5 states
+  const currentResult = await pool.request().query(currentQuery);
+  
+  // Extract state names from current period results
+  const currentStates = currentResult.recordset.map(row => row.State).filter(state => state); // Filter out null/undefined states
+  
+  // Previous period query - only for states that are in current period's top 5
+  let prevResult = { recordset: [] };
+  
+  if (currentStates.length > 0) {
+    // Build state filter for previous period
+    const stateFilter = currentStates.map(state => `'${state.replace(/'/g, "''")}'`).join(',');
+    const prevWhere = [
+      ...whereConditions, 
+      `purchase_date >= '${formatDate(prevStartDateObj)}' AND purchase_date <= '${formatDate(prevEndDateObj)}'`,
+      `state IN (${stateFilter})`
+    ];
+    
+    const prevQuery = `
+      SELECT
+        state as "State",
+        SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+      FROM std_orders
+      WHERE ${prevWhere.join(' AND ')}
+      GROUP BY state
+      ORDER BY SUM(CAST(total_sales AS FLOAT)) DESC
+    `;
+    
+    prevResult = await pool.request().query(prevQuery);
+    
+    // Ensure previous results are in the same order as current (matching state order)
+    const stateOrderMap = {};
+    currentStates.forEach((state, index) => {
+      stateOrderMap[state] = index;
+    });
+    
+    prevResult.recordset.sort((a, b) => {
+      const orderA = stateOrderMap[a.State] !== undefined ? stateOrderMap[a.State] : 999;
+      const orderB = stateOrderMap[b.State] !== undefined ? stateOrderMap[b.State] : 999;
+      return orderA - orderB;
+    });
+    
+    // Add missing states with 0 sales to maintain same structure
+    const prevStateMap = {};
+    prevResult.recordset.forEach(row => {
+      prevStateMap[row.State] = row;
+    });
+    
+    const orderedPrevResults = currentStates.map(state => {
+      if (prevStateMap[state]) {
+        return prevStateMap[state];
+      } else {
+        return {
+          State: state,
+          Total_Sales: 0
+        };
+      }
+    });
+    
+    prevResult.recordset = orderedPrevResults;
+  }
+
+  res.json({
+    success: true,
+    message: 'Top 5 state sales data retrieved successfully',
+    data: {
+      current: currentResult.recordset,
+      previous: prevResult.recordset
+    },
+    filters: {
+      dateRange: {
+        current: {
+          start: formatDate(startDateObj),
+          end: formatDate(endDateObj)
+        },
+        previous: {
+          start: formatDate(prevStartDateObj),
+          end: formatDate(prevEndDateObj)
+        }
+      },
+      appliedFilters: {
+        sku,
+        productName,
+        category,
+        city,
+        state,
+        purchaseHour,
+        startMonth,
+        endMonth,
+        country,
+        platform,
+        filterType
+      }
+    }
+  });
+};
+
+// Helper function for day-wise sales
+const fetchDayWiseSales = async (req, res, pool) => {
+  const {
+    sku,
+    productName,
+    category,
+    city,
+    state,
+    purchaseHour,
+    startMonth,
+    endMonth,
+    filterType = "previousmonth",
+    country,
+    platform
+  } = req.query;
+
+  const {
+    startDateObj,
+    endDateObj,
+    prevStartDateObj,
+    prevEndDateObj
+  } = getOrderDateRanges(req.query);
+
+  // Build WHERE conditions (same as fetchSalesData)
+  let whereConditions = [];
+  if (sku) whereConditions.push(`sku IN ('${sku.split(',').map(s => s.trim()).join("','")}')`);
+  if (productName) whereConditions.push(`product_name LIKE '%${productName}%'`);
+  if (category) whereConditions.push(`product_category = '${category}'`);
+  if (city) whereConditions.push(`city = '${city}'`);
+  if (state) whereConditions.push(`state = '${state}'`);
+  if (purchaseHour !== undefined) whereConditions.push(`purchase_hour = ${parseInt(purchaseHour)}`);
+  if (country) whereConditions.push(`country LIKE '%${country}%'`);
+  if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  // Current period query - group by day
+  const currentWhere = [...whereConditions, `purchase_date >= '${formatDate(startDateObj)}' AND purchase_date <= '${formatDate(endDateObj)}'`];
+  const currentQuery = `
+    SELECT
+      CAST(purchase_date AS DATE) as "purchase-date",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${currentWhere.join(' AND ')}
+    GROUP BY CAST(purchase_date AS DATE)
+    ORDER BY CAST(purchase_date AS DATE)
+  `;
+
+  // Previous period query - group by day
+  const prevWhere = [...whereConditions, `purchase_date >= '${formatDate(prevStartDateObj)}' AND purchase_date <= '${formatDate(prevEndDateObj)}'`];
+  const prevQuery = `
+    SELECT
+      CAST(purchase_date AS DATE) as "purchase-date",
+      SUM(CAST(total_sales AS FLOAT)) as "Total_Sales"
+    FROM std_orders
+    WHERE ${prevWhere.join(' AND ')}
+    GROUP BY CAST(purchase_date AS DATE)
+    ORDER BY CAST(purchase_date AS DATE)
+  `;
+
+  const currentResult = await pool.request().query(currentQuery);
+  const prevResult = await pool.request().query(prevQuery);
+
+  res.json({
+    success: true,
+    message: 'Day-wise sales data retrieved successfully',
+    data: {
+      current: currentResult.recordset,
+      previous: prevResult.recordset
+    },
+    filters: {
+      dateRange: {
+        current: {
+          start: formatDate(startDateObj),
+          end: formatDate(endDateObj)
+        },
+        previous: {
+          start: formatDate(prevStartDateObj),
+          end: formatDate(prevEndDateObj)
+        }
+      },
+      appliedFilters: {
+        sku,
+        productName,
+        category,
+        city,
+        state,
+        purchaseHour,
+        startMonth,
+        endMonth,
+        country,
+        platform,
+        filterType
+      }
+    }
+  });
+};
+
 exports.getSalesData = (req, res) => withDatabaseConnection(req, res, fetchSalesData);
 exports.getRegionalSales = (req, res) => withDatabaseConnection(req, res, fetchRegionalSales);
 exports.getSkuList = (req, res) => withDatabaseConnection(req, res, fetchSkuList);
@@ -978,3 +1417,7 @@ exports.getStatesList = (req, res) => withDatabaseConnection(req, res, fetchStat
 exports.getCitiesList = (req, res) => withDatabaseConnection(req, res, fetchCitiesList);
 exports.getSalesComparison = (req, res) => withDatabaseConnection(req, res, fetchSalesComparison);
 exports.getAdData = (req, res) => withDatabaseConnection(req, res, fetchAdData);
+exports.getMonthlySalesData = (req, res) => withDatabaseConnection(req, res, fetchMonthlySalesData);
+exports.getTimeTrend = (req, res) => withDatabaseConnection(req, res, fetchTimeTrend);
+exports.getTop5StateSales = (req, res) => withDatabaseConnection(req, res, fetchTop5StateSales);
+exports.getDayWiseSales = (req, res) => withDatabaseConnection(req, res, fetchDayWiseSales);

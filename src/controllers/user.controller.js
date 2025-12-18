@@ -103,6 +103,19 @@ const getOrdersData = async (req, res) => {
   }
 };
 
+const getOrdersLineChartData = async (req, res) => {
+  try {
+    // The orderService.getOrdersLineChartByDatabase handles the request and response directly
+    await orderService.getOrdersLineChartByDatabase(req, res);
+  } catch (error) {
+    logger.error(`Get orders line chart data error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 const getOrdersExecutiveallData = async (req, res) => {
   try {
     // Allow ordersExecutiveall to fetch data even when filterType isn't provided
@@ -124,5 +137,6 @@ module.exports = {
   getUserDetails,
   getClientData,
   getOrdersData,
+  getOrdersLineChartData,
   getOrdersExecutiveallData,
 };

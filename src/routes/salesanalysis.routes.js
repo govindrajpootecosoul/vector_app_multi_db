@@ -25,4 +25,16 @@ router.get('/adData/filterData', authenticateToken, salesanalysisController.getA
 // Comprehensive Sales Analysis API (supports all filters in one endpoint)
 router.get('/data', authenticateToken, salesanalysisController.getComprehensiveSalesData);
 
+// Monthly Sales Data API
+router.get('/monthlysalesdata', authenticateToken, salesanalysisController.getMonthlySalesData);
+
+// Time Trend API
+router.get('/timetrend', authenticateToken, salesanalysisController.getTimeTrend);
+
+// Top 5 State Sales API
+router.get('/top5statesales', authenticateToken, salesanalysisController.getTop5StateSales);
+
+// Day-wise Sales API
+router.get('/daywisesales', authenticateToken, salesanalysisController.getDayWiseSales);
+
 module.exports = router;

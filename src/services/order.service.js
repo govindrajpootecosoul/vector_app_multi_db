@@ -990,37 +990,89 @@ exports.getOrdersByDatabase = async (req, res) => {
       `
       : '';
 
+    // Check if date range spans only one month
+    const isSingleMonth = (() => {
+      if (!currentStartDate || !currentEndDate) return false;
+      const startYear = currentStartDate.getUTCFullYear();
+      const startMonth = currentStartDate.getUTCMonth();
+      const endYear = currentEndDate.getUTCFullYear();
+      const endMonth = currentEndDate.getUTCMonth();
+      return startYear === endYear && startMonth === endMonth;
+    })();
+
+    // Determine if we should group by month or day
+    // Group by month if: filterType is currentyear/lastyear OR custom range spans multiple months
+    // Group by day if: filterType is currentmonth/previousmonth OR custom range is single month
+    const shouldGroupByMonth = !isSingleMonth && (
+      effectiveFilterType === 'currentyear' || 
+      effectiveFilterType === 'lastyear' ||
+      (hasCustomRange && !isSingleMonth)
+    );
+
     let currentQuery;
     const countryCurrencyLookup = {};
     if (groupByCountryDates) {
-      currentQuery = `
-        SELECT
-          ISNULL(country, 'Unknown') AS country,
-          CAST(purchase_date AS DATE) AS purchase_date,
-          MAX(currency) AS currency,
-          SUM(CAST(quantity AS INT)) AS totalQuantity,
-          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
-          COUNT(DISTINCT order_id) AS orderCount
-        FROM std_orders
-        WHERE ${whereClause}
-        ${currentDateCondition}
-        GROUP BY ISNULL(country, 'Unknown'), CAST(purchase_date AS DATE)
-        ORDER BY country, purchase_date
-      `;
+      if (shouldGroupByMonth) {
+        currentQuery = `
+          SELECT
+            ISNULL(country, 'Unknown') AS country,
+            FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY ISNULL(country, 'Unknown'), FORMAT(purchase_date, 'yyyy-MM')
+          ORDER BY country, purchase_month
+        `;
+      } else {
+        currentQuery = `
+          SELECT
+            ISNULL(country, 'Unknown') AS country,
+            CAST(purchase_date AS DATE) AS purchase_date,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY ISNULL(country, 'Unknown'), CAST(purchase_date AS DATE)
+          ORDER BY country, purchase_date
+        `;
+      }
     } else {
-      currentQuery = `
-        SELECT
-          CAST(purchase_date AS DATE) AS purchase_date,
-          MAX(currency) AS currency,
-          SUM(CAST(quantity AS INT)) AS totalQuantity,
-          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
-          COUNT(DISTINCT order_id) AS orderCount
-        FROM std_orders
-        WHERE ${whereClause}
-        ${currentDateCondition}
-        GROUP BY CAST(purchase_date AS DATE)
-        ORDER BY purchase_date
-      `;
+      if (shouldGroupByMonth) {
+        currentQuery = `
+          SELECT
+            FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY FORMAT(purchase_date, 'yyyy-MM')
+          ORDER BY purchase_month
+        `;
+      } else {
+        currentQuery = `
+          SELECT
+            CAST(purchase_date AS DATE) AS purchase_date,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY CAST(purchase_date AS DATE)
+          ORDER BY purchase_date
+        `;
+      }
     }
 
     const currentRequest = pool.request();
@@ -1035,9 +1087,19 @@ exports.getOrdersByDatabase = async (req, res) => {
     currentResult.recordset.forEach(row => {
       if (groupByCountryDates) {
         const countryKey = row.country || 'Unknown';
-        const dateKey = row.purchase_date instanceof Date
-          ? row.purchase_date.toISOString().split('T')[0]
-          : new Date(row.purchase_date).toISOString().split('T')[0];
+        // Handle both date (YYYY-MM-DD) and month (YYYY-MM) formats
+        let dateKey;
+        if (shouldGroupByMonth) {
+          dateKey = row.purchase_month || (row.purchase_date ? 
+            (row.purchase_date instanceof Date ? 
+              row.purchase_date.toISOString().substring(0, 7) : 
+              new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+            '');
+        } else {
+          dateKey = row.purchase_date instanceof Date
+            ? row.purchase_date.toISOString().split('T')[0]
+            : new Date(row.purchase_date).toISOString().split('T')[0];
+        }
         const rowCurrency = (row.currency || countryCurrencyFallback[countryKey] || '').toUpperCase();
 
         if (!breakdown[countryKey]) {
@@ -1060,9 +1122,19 @@ exports.getOrdersByDatabase = async (req, res) => {
         totalSales += entry.totalSales;
         totalOrders += entry.orderCount;
       } else {
-        const key = row.purchase_date instanceof Date
-          ? row.purchase_date.toISOString().split('T')[0]
-          : new Date(row.purchase_date).toISOString().split('T')[0];
+        // Handle both date (YYYY-MM-DD) and month (YYYY-MM) formats
+        let key;
+        if (shouldGroupByMonth) {
+          key = row.purchase_month || (row.purchase_date ? 
+            (row.purchase_date instanceof Date ? 
+              row.purchase_date.toISOString().substring(0, 7) : 
+              new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+            '');
+        } else {
+          key = row.purchase_date instanceof Date
+            ? row.purchase_date.toISOString().split('T')[0]
+            : new Date(row.purchase_date).toISOString().split('T')[0];
+        }
 
         breakdown[key] = {
           date: key,
@@ -1084,7 +1156,13 @@ exports.getOrdersByDatabase = async (req, res) => {
         breakdown[countryKey].forEach(item => {
           item.aov = item.orderCount > 0 ? Number((item.totalSales / item.orderCount).toFixed(2)) : 0;
         });
-        breakdown[countryKey].sort((a, b) => new Date(a.date) - new Date(b.date));
+        // Sort by date/month - works for both YYYY-MM-DD and YYYY-MM formats
+        breakdown[countryKey].sort((a, b) => {
+          // For YYYY-MM format, append '-01' to make it sortable as date
+          const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+          const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+          return new Date(dateA) - new Date(dateB);
+        });
       });
       monthlyTotals = await computeMonthlyTotals(breakdown, countryCurrencyLookup);
       applyUsdToBreakdown(breakdown, monthlyTotals);
@@ -1141,7 +1219,12 @@ exports.getOrdersByDatabase = async (req, res) => {
       aov: currentAOV.toFixed(2),
       items: groupByCountryDates
         ? breakdown
-        : Object.values(breakdown).sort((a, b) => new Date(a.date) - new Date(b.date)),
+        : Object.values(breakdown).sort((a, b) => {
+            // Sort by date/month - works for both YYYY-MM-DD and YYYY-MM formats
+            const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+            const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+            return new Date(dateA) - new Date(dateB);
+          }),
       comparison: {
         currentPeriod: { startDate: currentStartDate || null, endDate: currentEndDate || null },
         previousPeriod: { startDate: previousStartDate || null, endDate: previousEndDate || null },
@@ -1169,6 +1252,612 @@ exports.getOrdersByDatabase = async (req, res) => {
 
   } catch (error) {
     console.error('Order service error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getOrdersLineChartByDatabase = async (req, res) => {
+  try {
+    const {
+      sku,
+      platform,
+      filterType,
+      purchase_date, // Support legacy parameter name
+      fromDate,
+      toDate,
+      startMonth,
+      endMonth,
+      state,
+      city,
+      country
+    } = req.query;
+
+    let databaseName = req.user?.databaseName || req.databaseName;
+    if (!databaseName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database name not found in token',
+        message: 'Please ensure your JWT token contains the databaseName field.'
+      });
+    }
+    req.databaseName = databaseName;
+
+    const hasCustomRange = (startMonth && endMonth) || (fromDate && toDate);
+    const allowDateSkip = req.skipOrdersDateRange === true;
+    const groupByCountryDates = req.groupOrdersByCountryDates === true;
+
+    if (!allowDateSkip && !hasCustomRange && !filterType) {
+      return res.status(400).json({
+        status: 400,
+        error: {
+          code: "BAD_REQUEST",
+          message: "filterType is required when no custom date range is provided",
+          details: "Provide a valid filterType or use startMonth/endMonth (YYYY-MM) or fromDate/toDate (YYYY-MM-DD) for custom ranges."
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const effectiveFilterType = purchase_date || filterType;
+
+    const pool = await getConnection(req);
+
+    const today = new Date();
+    const currentYear = today.getUTCFullYear();
+    const currentMonth = today.getUTCMonth();
+
+    let currentStartDate, currentEndDate;
+    let previousStartDate, previousEndDate;
+    let previousYearStartDate, previousYearEndDate;
+
+    const parseMonthYear = (monthYearStr) => {
+      if (!monthYearStr || !monthYearStr.includes('-')) return null;
+      const [year, month] = monthYearStr.split('-').map(s => parseInt(s.trim()));
+      if (isNaN(year) || isNaN(month) || month < 1 || month > 12) return null;
+      return { month: month - 1, year };
+    };
+
+    // Helper function to calculate previous year dates (same period, one year earlier)
+    const calculatePreviousYearDates = (startDate, endDate) => {
+      if (!startDate || !endDate) return { start: null, end: null };
+      // Create new date objects to avoid mutating originals
+      const startYear = startDate.getUTCFullYear();
+      const startMonth = startDate.getUTCMonth();
+      const startDay = startDate.getUTCDate();
+      
+      const endYear = endDate.getUTCFullYear();
+      const endMonth = endDate.getUTCMonth();
+      const endDay = endDate.getUTCDate();
+      
+      // Calculate previous year dates explicitly
+      const prevYearStart = new Date(Date.UTC(startYear - 1, startMonth, startDay));
+      const prevYearEnd = new Date(Date.UTC(endYear - 1, endMonth, endDay));
+      
+      return { start: prevYearStart, end: prevYearEnd };
+    };
+
+    if (startMonth && endMonth) {
+      const startParsed = parseMonthYear(startMonth);
+      const endParsed = parseMonthYear(endMonth);
+
+      if (startParsed && endParsed) {
+        currentStartDate = new Date(Date.UTC(startParsed.year, startParsed.month, 1));
+        currentEndDate = new Date(Date.UTC(endParsed.year, endParsed.month + 1, 0));
+
+        const duration = (currentEndDate - currentStartDate) / (1000 * 60 * 60 * 24) + 1;
+        previousEndDate = new Date(currentStartDate.getTime() - 1);
+        previousStartDate = new Date(previousEndDate.getTime() - (duration - 1) * 86400000);
+        
+        // Calculate previous year dates
+        const prevYearDates = calculatePreviousYearDates(currentStartDate, currentEndDate);
+        previousYearStartDate = prevYearDates.start;
+        previousYearEndDate = prevYearDates.end;
+      }
+    } else if (fromDate && toDate) {
+      currentStartDate = new Date(fromDate);
+      currentEndDate = new Date(toDate);
+
+      currentEndDate.setHours(23, 59, 59, 999);
+      const duration = (currentEndDate - currentStartDate) / (1000 * 60 * 60 * 24) + 1;
+      previousEndDate = new Date(currentStartDate.getTime() - 1);
+      previousStartDate = new Date(previousEndDate.getTime() - (duration - 1) * 86400000);
+      
+      // Calculate previous year dates
+      const prevYearDates = calculatePreviousYearDates(currentStartDate, currentEndDate);
+      previousYearStartDate = prevYearDates.start;
+      previousYearEndDate = prevYearDates.end;
+    } else if (effectiveFilterType) {
+      switch (effectiveFilterType) {
+        case "currentmonth":
+          // Current month: first day to last day of current month
+          currentStartDate = new Date(Date.UTC(currentYear, currentMonth, 1));
+          currentEndDate = new Date(Date.UTC(currentYear, currentMonth + 1, 0, 23, 59, 59, 999));
+          previousStartDate = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
+          previousEndDate = new Date(Date.UTC(currentYear, currentMonth, 0, 23, 59, 59, 999));
+          // Previous year same month (one year before current month)
+          previousYearStartDate = new Date(Date.UTC(currentYear - 1, currentMonth, 1));
+          previousYearEndDate = new Date(Date.UTC(currentYear - 1, currentMonth + 1, 0, 23, 59, 59, 999));
+          break;
+        case "previousmonth":
+          // Previous month: first day to last day of previous month
+          currentStartDate = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
+          currentEndDate = new Date(Date.UTC(currentYear, currentMonth, 0, 23, 59, 59, 999));
+          previousStartDate = new Date(Date.UTC(currentYear, currentMonth - 2, 1));
+          previousEndDate = new Date(Date.UTC(currentYear, currentMonth - 1, 0, 23, 59, 59, 999));
+          // Previous year same month (one year before previous month)
+          previousYearStartDate = new Date(Date.UTC(currentYear - 1, currentMonth - 1, 1));
+          previousYearEndDate = new Date(Date.UTC(currentYear - 1, currentMonth, 0, 23, 59, 59, 999));
+          break;
+        case "currentyear":
+          // Current year: Jan 1 to Dec 31 of current year (e.g., 2024)
+          currentStartDate = new Date(Date.UTC(currentYear, 0, 1));
+          // Use last day of December by using month 12, day 0 (which gives last day of month 11)
+          currentEndDate = new Date(Date.UTC(currentYear, 12, 0, 23, 59, 59, 999));
+          previousStartDate = new Date(Date.UTC(currentYear - 1, 0, 1));
+          previousEndDate = new Date(Date.UTC(currentYear - 1, 12, 0, 23, 59, 59, 999));
+          // Previous year for comparison - one year before current year (e.g., 2023 if current is 2024)
+          previousYearStartDate = new Date(Date.UTC(currentYear - 1, 0, 1));
+          previousYearEndDate = new Date(Date.UTC(currentYear - 1, 12, 0, 23, 59, 59, 999));
+          break;
+        case "lastyear":
+          // Last year: Jan 1 to Dec 31 of previous year
+          currentStartDate = new Date(Date.UTC(currentYear - 1, 0, 1));
+          currentEndDate = new Date(Date.UTC(currentYear - 1, 11, 31, 23, 59, 59, 999));
+          previousStartDate = new Date(Date.UTC(currentYear - 2, 0, 1));
+          previousEndDate = new Date(Date.UTC(currentYear - 2, 11, 31, 23, 59, 59, 999));
+          // Year before last - one year before last year
+          previousYearStartDate = new Date(Date.UTC(currentYear - 3, 0, 1));
+          previousYearEndDate = new Date(Date.UTC(currentYear - 3, 11, 31, 23, 59, 59, 999));
+          break;
+        default:
+          return res.status(400).json({
+            status: 400,
+            error: {
+              code: "BAD_REQUEST",
+              message: `Invalid filterType: ${effectiveFilterType}`,
+              details: "Provide a valid filterType such as currentmonth, previousmonth, currentyear, or lastyear."
+            },
+            timestamp: new Date().toISOString()
+          });
+      }
+    } else if (allowDateSkip) {
+      currentStartDate = null;
+      currentEndDate = null;
+      previousStartDate = null;
+      previousEndDate = null;
+      previousYearStartDate = null;
+      previousYearEndDate = null;
+    }
+
+    // Build WHERE conditions
+    let whereConditions = [];
+    if (sku) whereConditions.push(`sku IN (${sku.split(",").map(s => `'${s.trim()}'`).join(",")})`);
+    if (platform) whereConditions.push(`platform LIKE '%${platform}%'`);
+    if (state) whereConditions.push(`state = '${state}'`);
+    if (city) whereConditions.push(`city = '${city}'`);
+    if (country) whereConditions.push(`country LIKE '%${country}%'`);
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
+
+    const currentDateCondition = (currentStartDate && currentEndDate)
+      ? `
+        AND CAST(purchase_date AS DATE) >= @currentStartDate 
+        AND CAST(purchase_date AS DATE) <= @currentEndDate
+      `
+      : '';
+
+    // Check if date range spans only one month
+    const isSingleMonth = (() => {
+      if (!currentStartDate || !currentEndDate) return false;
+      const startYear = currentStartDate.getUTCFullYear();
+      const startMonth = currentStartDate.getUTCMonth();
+      const endYear = currentEndDate.getUTCFullYear();
+      const endMonth = currentEndDate.getUTCMonth();
+      return startYear === endYear && startMonth === endMonth;
+    })();
+
+    // Determine if we should group by month or day
+    const shouldGroupByMonth = !isSingleMonth && (
+      effectiveFilterType === 'currentyear' || 
+      effectiveFilterType === 'lastyear' ||
+      (hasCustomRange && !isSingleMonth)
+    );
+
+    let currentQuery;
+    const countryCurrencyLookup = {};
+    if (groupByCountryDates) {
+      if (shouldGroupByMonth) {
+        currentQuery = `
+          SELECT
+            ISNULL(country, 'Unknown') AS country,
+            FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY ISNULL(country, 'Unknown'), FORMAT(purchase_date, 'yyyy-MM')
+          ORDER BY country, purchase_month
+        `;
+      } else {
+        currentQuery = `
+          SELECT
+            ISNULL(country, 'Unknown') AS country,
+            CAST(purchase_date AS DATE) AS purchase_date,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY ISNULL(country, 'Unknown'), CAST(purchase_date AS DATE)
+          ORDER BY country, purchase_date
+        `;
+      }
+    } else {
+      if (shouldGroupByMonth) {
+        currentQuery = `
+          SELECT
+            FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY FORMAT(purchase_date, 'yyyy-MM')
+          ORDER BY purchase_month
+        `;
+      } else {
+        currentQuery = `
+          SELECT
+            CAST(purchase_date AS DATE) AS purchase_date,
+            MAX(currency) AS currency,
+            SUM(CAST(quantity AS INT)) AS totalQuantity,
+            SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+            COUNT(DISTINCT order_id) AS orderCount
+          FROM std_orders
+          WHERE ${whereClause}
+          ${currentDateCondition}
+          GROUP BY CAST(purchase_date AS DATE)
+          ORDER BY purchase_date
+        `;
+      }
+    }
+
+    const currentRequest = pool.request();
+    if (currentStartDate && currentEndDate) {
+      currentRequest.input('currentStartDate', sql.Date, currentStartDate);
+      currentRequest.input('currentEndDate', sql.Date, currentEndDate);
+    }
+    const currentResult = await currentRequest.query(currentQuery);
+
+    let breakdown = {}, totalQuantity = 0, totalSales = 0, totalOrders = 0;
+
+    currentResult.recordset.forEach(row => {
+      if (groupByCountryDates) {
+        const countryKey = row.country || 'Unknown';
+        let dateKey;
+        if (shouldGroupByMonth) {
+          dateKey = row.purchase_month || (row.purchase_date ? 
+            (row.purchase_date instanceof Date ? 
+              row.purchase_date.toISOString().substring(0, 7) : 
+              new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+            '');
+        } else {
+          dateKey = row.purchase_date instanceof Date
+            ? row.purchase_date.toISOString().split('T')[0]
+            : new Date(row.purchase_date).toISOString().split('T')[0];
+        }
+        const rowCurrency = (row.currency || countryCurrencyFallback[countryKey] || '').toUpperCase();
+
+        if (!breakdown[countryKey]) {
+          breakdown[countryKey] = [];
+        }
+        if (rowCurrency && !countryCurrencyLookup[countryKey]) {
+          countryCurrencyLookup[countryKey] = rowCurrency;
+        }
+
+        const entry = {
+          date: dateKey,
+          totalQuantity: parseInt(row.totalQuantity) || 0,
+          totalSales: parseFloat(row.totalSales) || 0,
+          orderCount: parseInt(row.orderCount) || 0,
+          aov: 0
+        };
+
+        breakdown[countryKey].push(entry);
+        totalQuantity += entry.totalQuantity;
+        totalSales += entry.totalSales;
+        totalOrders += entry.orderCount;
+      } else {
+        let key;
+        if (shouldGroupByMonth) {
+          key = row.purchase_month || (row.purchase_date ? 
+            (row.purchase_date instanceof Date ? 
+              row.purchase_date.toISOString().substring(0, 7) : 
+              new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+            '');
+        } else {
+          key = row.purchase_date instanceof Date
+            ? row.purchase_date.toISOString().split('T')[0]
+            : new Date(row.purchase_date).toISOString().split('T')[0];
+        }
+
+        breakdown[key] = {
+          date: key,
+          totalQuantity: parseInt(row.totalQuantity) || 0,
+          totalSales: parseFloat(row.totalSales) || 0,
+          orderCount: parseInt(row.orderCount) || 0,
+          aov: 0
+        };
+        totalQuantity += breakdown[key].totalQuantity;
+        totalSales += breakdown[key].totalSales;
+        totalOrders += breakdown[key].orderCount;
+      }
+    });
+
+    let monthlyTotals = null;
+    let totalSalesUsdSummary = null;
+    if (groupByCountryDates) {
+      Object.keys(breakdown).forEach(countryKey => {
+        breakdown[countryKey].forEach(item => {
+          item.aov = item.orderCount > 0 ? Number((item.totalSales / item.orderCount).toFixed(2)) : 0;
+        });
+        breakdown[countryKey].sort((a, b) => {
+          const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+          const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+          return new Date(dateA) - new Date(dateB);
+        });
+      });
+      monthlyTotals = await computeMonthlyTotals(breakdown, countryCurrencyLookup);
+      applyUsdToBreakdown(breakdown, monthlyTotals);
+      totalSalesUsdSummary = summarizeUsdTotals(monthlyTotals);
+    } else {
+      Object.keys(breakdown).forEach(key => {
+        const item = breakdown[key];
+        item.aov = item.orderCount > 0 ? (item.totalSales / item.orderCount) : 0;
+        item.aov = Number(item.aov.toFixed(2));
+      });
+    }
+
+    // Query previous year data (same structure as current)
+    let previousYearBreakdown = {};
+    let previousYearTotalQuantity = 0, previousYearTotalSales = 0, previousYearTotalOrders = 0;
+    const previousYearDateCondition = (previousYearStartDate && previousYearEndDate)
+      ? `
+        AND CAST(purchase_date AS DATE) >= @previousYearStartDate 
+        AND CAST(purchase_date AS DATE) <= @previousYearEndDate
+      `
+      : '';
+
+    if (previousYearDateCondition && currentStartDate && currentEndDate) {
+      let previousYearQuery;
+      const previousYearCountryCurrencyLookup = {};
+      
+      if (groupByCountryDates) {
+        if (shouldGroupByMonth) {
+          previousYearQuery = `
+            SELECT
+              ISNULL(country, 'Unknown') AS country,
+              FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+              MAX(currency) AS currency,
+              SUM(CAST(quantity AS INT)) AS totalQuantity,
+              SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+              COUNT(DISTINCT order_id) AS orderCount
+            FROM std_orders
+            WHERE ${whereClause}
+            ${previousYearDateCondition}
+            GROUP BY ISNULL(country, 'Unknown'), FORMAT(purchase_date, 'yyyy-MM')
+            ORDER BY country, purchase_month
+          `;
+        } else {
+          previousYearQuery = `
+            SELECT
+              ISNULL(country, 'Unknown') AS country,
+              CAST(purchase_date AS DATE) AS purchase_date,
+              MAX(currency) AS currency,
+              SUM(CAST(quantity AS INT)) AS totalQuantity,
+              SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+              COUNT(DISTINCT order_id) AS orderCount
+            FROM std_orders
+            WHERE ${whereClause}
+            ${previousYearDateCondition}
+            GROUP BY ISNULL(country, 'Unknown'), CAST(purchase_date AS DATE)
+            ORDER BY country, purchase_date
+          `;
+        }
+      } else {
+        if (shouldGroupByMonth) {
+          previousYearQuery = `
+            SELECT
+              FORMAT(purchase_date, 'yyyy-MM') AS purchase_month,
+              MAX(currency) AS currency,
+              SUM(CAST(quantity AS INT)) AS totalQuantity,
+              SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+              COUNT(DISTINCT order_id) AS orderCount
+            FROM std_orders
+            WHERE ${whereClause}
+            ${previousYearDateCondition}
+            GROUP BY FORMAT(purchase_date, 'yyyy-MM')
+            ORDER BY purchase_month
+          `;
+        } else {
+          previousYearQuery = `
+            SELECT
+              CAST(purchase_date AS DATE) AS purchase_date,
+              MAX(currency) AS currency,
+              SUM(CAST(quantity AS INT)) AS totalQuantity,
+              SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+              COUNT(DISTINCT order_id) AS orderCount
+            FROM std_orders
+            WHERE ${whereClause}
+            ${previousYearDateCondition}
+            GROUP BY CAST(purchase_date AS DATE)
+            ORDER BY purchase_date
+          `;
+        }
+      }
+
+      const previousYearRequest = pool.request()
+        .input('previousYearStartDate', sql.Date, previousYearStartDate)
+        .input('previousYearEndDate', sql.Date, previousYearEndDate);
+      
+      const previousYearResult = await previousYearRequest.query(previousYearQuery);
+
+      previousYearResult.recordset.forEach(row => {
+        if (groupByCountryDates) {
+          const countryKey = row.country || 'Unknown';
+          let dateKey;
+          if (shouldGroupByMonth) {
+            dateKey = row.purchase_month || (row.purchase_date ? 
+              (row.purchase_date instanceof Date ? 
+                row.purchase_date.toISOString().substring(0, 7) : 
+                new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+              '');
+          } else {
+            dateKey = row.purchase_date instanceof Date
+              ? row.purchase_date.toISOString().split('T')[0]
+              : new Date(row.purchase_date).toISOString().split('T')[0];
+          }
+          const rowCurrency = (row.currency || countryCurrencyFallback[countryKey] || '').toUpperCase();
+
+          if (!previousYearBreakdown[countryKey]) {
+            previousYearBreakdown[countryKey] = [];
+          }
+          if (rowCurrency && !previousYearCountryCurrencyLookup[countryKey]) {
+            previousYearCountryCurrencyLookup[countryKey] = rowCurrency;
+          }
+
+          const entry = {
+            date: dateKey,
+            totalQuantity: parseInt(row.totalQuantity) || 0,
+            totalSales: parseFloat(row.totalSales) || 0,
+            orderCount: parseInt(row.orderCount) || 0,
+            aov: 0
+          };
+
+          previousYearBreakdown[countryKey].push(entry);
+          previousYearTotalQuantity += entry.totalQuantity;
+          previousYearTotalSales += entry.totalSales;
+          previousYearTotalOrders += entry.orderCount;
+        } else {
+          let key;
+          if (shouldGroupByMonth) {
+            key = row.purchase_month || (row.purchase_date ? 
+              (row.purchase_date instanceof Date ? 
+                row.purchase_date.toISOString().substring(0, 7) : 
+                new Date(row.purchase_date).toISOString().substring(0, 7)) : 
+              '');
+          } else {
+            key = row.purchase_date instanceof Date
+              ? row.purchase_date.toISOString().split('T')[0]
+              : new Date(row.purchase_date).toISOString().split('T')[0];
+          }
+
+          previousYearBreakdown[key] = {
+            date: key,
+            totalQuantity: parseInt(row.totalQuantity) || 0,
+            totalSales: parseFloat(row.totalSales) || 0,
+            orderCount: parseInt(row.orderCount) || 0,
+            aov: 0
+          };
+          previousYearTotalQuantity += previousYearBreakdown[key].totalQuantity;
+          previousYearTotalSales += previousYearBreakdown[key].totalSales;
+          previousYearTotalOrders += previousYearBreakdown[key].orderCount;
+        }
+      });
+
+      // Calculate AOV for previous year data
+      if (groupByCountryDates) {
+        Object.keys(previousYearBreakdown).forEach(countryKey => {
+          previousYearBreakdown[countryKey].forEach(item => {
+            item.aov = item.orderCount > 0 ? Number((item.totalSales / item.orderCount).toFixed(2)) : 0;
+          });
+          previousYearBreakdown[countryKey].sort((a, b) => {
+            const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+            const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+            return new Date(dateA) - new Date(dateB);
+          });
+        });
+      } else {
+        Object.keys(previousYearBreakdown).forEach(key => {
+          const item = previousYearBreakdown[key];
+          item.aov = item.orderCount > 0 ? (item.totalSales / item.orderCount) : 0;
+          item.aov = Number(item.aov.toFixed(2));
+        });
+      }
+    }
+
+    let previous = { totalQuantity: 0, totalSales: 0, orderCount: 0 };
+    const previousDateCondition = (previousStartDate && previousEndDate)
+      ? `
+        AND CAST(purchase_date AS DATE) >= @previousStartDate 
+        AND CAST(purchase_date AS DATE) <= @previousEndDate
+      `
+      : '';
+
+    if (previousDateCondition) {
+      const previousQuery = `
+        SELECT
+          SUM(CAST(quantity AS INT)) AS totalQuantity,
+          SUM(CAST(total_sales AS FLOAT)) AS totalSales,
+          COUNT(DISTINCT order_id) AS orderCount
+        FROM std_orders
+        WHERE ${whereClause}
+        ${previousDateCondition}
+      `;
+
+      const previousRequest = pool.request()
+        .input('previousStartDate', sql.Date, previousStartDate)
+        .input('previousEndDate', sql.Date, previousEndDate);
+
+      const previousResult = await previousRequest.query(previousQuery);
+      previous = previousResult.recordset[0] || { totalQuantity: 0, totalSales: 0, orderCount: 0 };
+    }
+
+    const getPercentChange = (curr, prev) => {
+      if (prev === 0) return "N/A";
+      const diff = ((curr - prev) / prev) * 100;
+      return (diff >= 0 ? diff.toFixed(2) + "% Gain" : diff.toFixed(2) + "% Loss");
+    };
+
+    // Prepare items array
+    const items = groupByCountryDates
+      ? breakdown
+      : Object.values(breakdown).sort((a, b) => {
+          // Sort by date/month - works for both YYYY-MM-DD and YYYY-MM formats
+          const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+          const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+          return new Date(dateA) - new Date(dateB);
+        });
+
+    // Prepare previousItems array
+    const previousItems = (previousYearStartDate && previousYearEndDate) ? (
+      groupByCountryDates
+        ? previousYearBreakdown
+        : Object.values(previousYearBreakdown).sort((a, b) => {
+            // Sort by date/month - works for both YYYY-MM-DD and YYYY-MM formats
+            const dateA = a.date.length === 7 ? a.date + '-01' : a.date;
+            const dateB = b.date.length === 7 ? b.date + '-01' : b.date;
+            return new Date(dateA) - new Date(dateB);
+          })
+    ) : [];
+
+    res.json({
+      success: true,
+      message: 'Orders line chart data retrieved successfully',
+      data: {
+        items,
+        previousItems
+      }, 
+    });
+
+  } catch (error) {
+    console.error('Order line chart service error:', error);
     res.status(500).json({ error: error.message });
   }
 };

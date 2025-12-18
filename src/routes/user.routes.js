@@ -8,6 +8,7 @@ router.post('/signup', userController.signup);
 router.get('/details', authenticateToken, userController.getUserDetails);
 router.get('/client', authenticateToken, userController.getClientData);
 router.get('/orders', authenticateToken, userController.getOrdersData);
+router.get('/orderslinechart', authenticateToken, userController.getOrdersLineChartData);
 router.get('/ordersExecutiveall', authenticateToken, userController.getOrdersExecutiveallData);
 
 module.exports = router;

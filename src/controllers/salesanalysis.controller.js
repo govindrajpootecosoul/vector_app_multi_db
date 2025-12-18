@@ -108,3 +108,39 @@ exports.getComprehensiveSalesData = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+exports.getMonthlySalesData = async (req, res) => {
+  try {
+    await salesanalysisService.getMonthlySalesData(req, res);
+  } catch (error) {
+    console.error('Monthly sales data controller error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getTimeTrend = async (req, res) => {
+  try {
+    await salesanalysisService.getTimeTrend(req, res);
+  } catch (error) {
+    console.error('Time trend controller error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getTop5StateSales = async (req, res) => {
+  try {
+    await salesanalysisService.getTop5StateSales(req, res);
+  } catch (error) {
+    console.error('Top 5 state sales controller error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getDayWiseSales = async (req, res) => {
+  try {
+    await salesanalysisService.getDayWiseSales(req, res);
+  } catch (error) {
+    console.error('Day-wise sales controller error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
