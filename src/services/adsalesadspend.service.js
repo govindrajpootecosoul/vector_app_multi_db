@@ -183,6 +183,12 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
 
     const pool = await getConnection(req);
 
+    // Get client_id from token to determine which column to use for TACOS calculation
+    const clientId = req.user?.client_id;
+    // For client "TH-1755734939046", use total_revenue; for others, use total_gross_sales
+    const revenueColumn = clientId === 'TH-1755734939046' ? 'total_revenue' : 'total_gross_sales';
+    console.log(`TACOS calculation: Using ${revenueColumn} for client_id: ${clientId}`);
+
     const today = new Date();
     console.log('Today\'s date:', today.toISOString());
     const query = {};
@@ -382,7 +388,7 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
           year_month,
           SUM(CAST(ad_sales AS FLOAT)) as totalAdSales,
           SUM(CAST(ad_spend AS FLOAT)) as totalAdSpend,
-          SUM(CAST(total_gross_sales AS FLOAT)) as totalRevenue
+          SUM(CAST(${revenueColumn} AS FLOAT)) as totalRevenue
         FROM std_ad_sales
         WHERE ${whereClause} ${monthCondition}
         GROUP BY ISNULL(country, 'Unknown'), year_month
@@ -431,7 +437,7 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
             year_month,
             SUM(CAST(ad_sales AS FLOAT)) as totalAdSales,
             SUM(CAST(ad_spend AS FLOAT)) as totalAdSpend,
-            SUM(CAST(total_gross_sales AS FLOAT)) as totalRevenue
+            SUM(CAST(${revenueColumn} AS FLOAT)) as totalRevenue
           FROM std_ad_sales
           WHERE ${whereClause} ${previousMonthCondition}
           GROUP BY ISNULL(country, 'Unknown'), year_month
@@ -465,7 +471,7 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
           SELECT
             SUM(CAST(ad_sales AS FLOAT)) as totalAdSales,
             SUM(CAST(ad_spend AS FLOAT)) as totalAdSpend,
-            SUM(CAST(total_gross_sales AS FLOAT)) as totalRevenue
+            SUM(CAST(${revenueColumn} AS FLOAT)) as totalRevenue
           FROM std_ad_sales
           WHERE ${whereClause} AND year_month IN (${currentMonthsList})
         `;
@@ -484,7 +490,7 @@ exports.getAdSalesAdSpendByDatabase = async (req, res) => {
           SELECT
             SUM(CAST(ad_sales AS FLOAT)) as totalAdSales,
             SUM(CAST(ad_spend AS FLOAT)) as totalAdSpend,
-            SUM(CAST(total_gross_sales AS FLOAT)) as totalRevenue
+            SUM(CAST(${revenueColumn} AS FLOAT)) as totalRevenue
           FROM std_ad_sales
           WHERE ${whereClause} AND year_month IN (${previousMonthsList})
         `;
