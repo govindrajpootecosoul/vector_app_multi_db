@@ -238,48 +238,99 @@ exports.getPnlData = async (req, res) => {
     console.log('PNL WHERE clause:', whereClause);
     console.log('PNL ORDER BY:', orderBy);
 
+    // Check if this is ecosoul client
+    const clientId = req.user?.client_id;
+    const isEcosoul = clientId === 'TH-1755734939046' || databaseName === 'thrive-client-ecosoulhome';
+
     // SQL query to group by sku and sum data
-    const query = `
-      SELECT
-        sku,
-        MAX(product_name) as product_name,
-        MAX(product_category) as product_category,
-        MAX(country) as country,
-        MAX(platform) as platform,
-        MAX(year_month) as year_month,
-        SUM(ad_cost) as ad_cost,
-        SUM(deal_fee) as deal_fee,
-        SUM(fba_inventory_fee) as fba_inventory_fee,
-        SUM(fba_reimbursement) as fba_reimbursement,
-        SUM(liquidations) as liquidations,
-        SUM(net_sales) as net_sales,
-        SUM(net_sales_with_tax) as net_sales_with_tax,
-        SUM(marketplace_withheld_tax) as marketplace_withheld_tax,
-        SUM(other_marketing_expenses) as other_marketing_expenses,
-        SUM(storage_fee) as storage_fee,
-        SUM(total_return_with_tax) as total_return_with_tax,
-        SUM(total_sales) as total_sales,
-        SUM(total_sales_with_tax) as total_sales_with_tax,
-        SUM(total_units) as total_units,
-        SUM(total_return_amount) as total_return_amount,
-        SUM(fba_fees) as fba_fees,
-        SUM(promotional_rebates) as promotional_rebates,
-        SUM(quantity) as quantity,
-        SUM(refund_quantity) as refund_quantity,
-        SUM(selling_fees) as selling_fees,
-        SUM(spend) as spend,
-        SUM(product_cogs) as product_cogs,
-        SUM(cogs) as cogs,
-        SUM(cm1) as cm1,
-        SUM(heads_cm2) as heads_cm2,
-        SUM(cm2) as cm2,
-        SUM(heads_cm3) as heads_cm3,
-        SUM(cm3) as cm3
-      FROM std_pnl
-      WHERE ${whereClause}
-      GROUP BY sku
-      ${orderBy}
-    `;
+    let query;
+    if (isEcosoul) {
+      // Ecosoul-specific column names
+      query = `
+        SELECT
+          sku,
+          MAX(product_name) as product_name,
+          MAX(product_category) as product_category,
+          MAX(country) as country,
+          MAX(platform) as platform,
+          MAX(year_month) as year_month,
+          SUM(ad_cost) as ad_cost,
+          SUM(deal_fee) as deal_fee,
+          SUM(fba_inv_placement_fee) as fba_inv_placement_fee,
+          SUM(fba_inventory_fee) as fba_inventory_fee,
+          SUM(fba_reimbursement) as fba_reimbursement,
+          SUM(liquidations) as liquidations,
+          SUM(net_sales) as net_sales,
+          SUM(other_marketing_expenses) as other_marketing_expenses,
+          SUM(storage_fee) as storage_fee,
+          SUM(total_sales) as total_sales,
+          SUM(total_units) as total_units,
+          SUM(total_return_amount) as total_return_amount,
+          SUM(fba_fees) as fba_fees,
+          SUM(promotional_rebates) as promotional_rebates,
+          SUM(selling_fees) as selling_fees,
+          SUM(final_cogs) as final_cogs,
+          SUM(total_landed_cost) as total_landed_cost,
+          SUM(ad_spend) as ad_spend,
+          SUM(cm1) as cm1,
+          SUM(heads_cm2) as heads_cm2,
+          SUM(cm2) as cm2,
+          SUM(heads_cm3) as heads_cm3,
+          SUM(cm3) as cm3,
+          MAX(material) as material,
+          MAX(product_type) as product_type,
+          MAX(channel) as channel,
+          SUM(net_shipping_services_fee) as net_shipping_services_fee,
+          SUM(final_service_fee) as final_service_fee
+        FROM std_pnl
+        WHERE ${whereClause}
+        GROUP BY sku
+        ${orderBy}
+      `;
+    } else {
+      // Standard column names for other clients
+      query = `
+        SELECT
+          sku,
+          MAX(product_name) as product_name,
+          MAX(product_category) as product_category,
+          MAX(country) as country,
+          MAX(platform) as platform,
+          MAX(year_month) as year_month,
+          SUM(ad_cost) as ad_cost,
+          SUM(deal_fee) as deal_fee,
+          SUM(fba_inventory_fee) as fba_inventory_fee,
+          SUM(fba_reimbursement) as fba_reimbursement,
+          SUM(liquidations) as liquidations,
+          SUM(net_sales) as net_sales,
+          SUM(net_sales_with_tax) as net_sales_with_tax,
+          SUM(marketplace_withheld_tax) as marketplace_withheld_tax,
+          SUM(other_marketing_expenses) as other_marketing_expenses,
+          SUM(storage_fee) as storage_fee,
+          SUM(total_return_with_tax) as total_return_with_tax,
+          SUM(total_sales) as total_sales,
+          SUM(total_sales_with_tax) as total_sales_with_tax,
+          SUM(total_units) as total_units,
+          SUM(total_return_amount) as total_return_amount,
+          SUM(fba_fees) as fba_fees,
+          SUM(promotional_rebates) as promotional_rebates,
+          SUM(quantity) as quantity,
+          SUM(refund_quantity) as refund_quantity,
+          SUM(selling_fees) as selling_fees,
+          SUM(spend) as spend,
+          SUM(product_cogs) as product_cogs,
+          SUM(cogs) as cogs,
+          SUM(cm1) as cm1,
+          SUM(heads_cm2) as heads_cm2,
+          SUM(cm2) as cm2,
+          SUM(heads_cm3) as heads_cm3,
+          SUM(cm3) as cm3
+        FROM std_pnl
+        WHERE ${whereClause}
+        GROUP BY sku
+        ${orderBy}
+      `;
+    }
 
     const result = await request.query(query);
     const pnlData = result.recordset;
@@ -315,7 +366,11 @@ exports.getPnlExecutiveData = async (req, res) => {
     } = req.query;
     const normalizedRange = normalizeRange(range);
 
-    const clientId = req.user.client_id;
+    const clientId = req.user?.client_id;
+    
+    // Get database name from token if not in params
+    let dbName = databaseName || req.user?.databaseName || req.databaseName;
+    const isEcosoul = clientId === 'TH-1755734939046' || dbName === 'thrive-client-ecosoulhome';
 
     if (!range && !date && !startMonth && !endMonth) {
       return res.status(400).json({
@@ -553,39 +608,75 @@ exports.getPnlExecutiveData = async (req, res) => {
         }
       }
 
-      const query = `
-        SELECT
-          SUM(ad_cost) as ad_cost,
-          SUM(deal_fee) as deal_fee,
-          SUM(fba_inventory_fee) as fba_inventory_fee,
-          SUM(fba_reimbursement) as fba_reimbursement,
-          SUM(liquidations) as liquidations,
-          SUM(net_sales) as net_sales,
-          SUM(net_sales_with_tax) as net_sales_with_tax,
-          SUM(marketplace_withheld_tax) as marketplace_withheld_tax,
-          SUM(other_marketing_expenses) as other_marketing_expenses,
-          SUM(storage_fee) as storage_fee,
-          SUM(total_return_with_tax) as total_return_with_tax,
-          SUM(total_sales) as total_sales,
-          SUM(total_sales_with_tax) as total_sales_with_tax,
-          SUM(total_units) as total_units,
-          SUM(total_return_amount) as total_return_amount,
-          SUM(fba_fees) as fba_fees,
-          SUM(promotional_rebates) as promotional_rebates,
-          SUM(quantity) as quantity,
-          SUM(refund_quantity) as refund_quantity,
-          SUM(selling_fees) as selling_fees,
-          SUM(spend) as spend,
-          SUM(product_cogs) as product_cogs,
-          SUM(cogs) as cogs,
-          SUM(cm1) as cm1,
-          SUM(heads_cm2) as heads_cm2,
-          SUM(cm2) as cm2,
-          SUM(heads_cm3) as heads_cm3,
-          SUM(cm3) as cm3
-        FROM std_pnl
-        WHERE ${whereClause}
-      `;
+      let query;
+      if (isEcosoul) {
+        // Ecosoul-specific column names
+        query = `
+          SELECT
+            SUM(ad_cost) as ad_cost,
+            SUM(deal_fee) as deal_fee,
+            SUM(fba_inv_placement_fee) as fba_inv_placement_fee,
+            SUM(fba_inventory_fee) as fba_inventory_fee,
+            SUM(fba_reimbursement) as fba_reimbursement,
+            SUM(liquidations) as liquidations,
+            SUM(net_sales) as net_sales,
+            SUM(other_marketing_expenses) as other_marketing_expenses,
+            SUM(storage_fee) as storage_fee,
+            SUM(total_sales) as total_sales,
+            SUM(total_units) as total_units,
+            SUM(total_return_amount) as total_return_amount,
+            SUM(fba_fees) as fba_fees,
+            SUM(promotional_rebates) as promotional_rebates,
+            SUM(selling_fees) as selling_fees,
+            SUM(final_cogs) as final_cogs,
+            SUM(total_landed_cost) as total_landed_cost,
+            SUM(ad_spend) as ad_spend,
+            SUM(cm1) as cm1,
+            SUM(heads_cm2) as heads_cm2,
+            SUM(cm2) as cm2,
+            SUM(heads_cm3) as heads_cm3,
+            SUM(cm3) as cm3,
+            SUM(net_shipping_services_fee) as net_shipping_services_fee,
+            SUM(final_service_fee) as final_service_fee
+          FROM std_pnl
+          WHERE ${whereClause}
+        `;
+      } else {
+        // Standard column names for other clients
+        query = `
+          SELECT
+            SUM(ad_cost) as ad_cost,
+            SUM(deal_fee) as deal_fee,
+            SUM(fba_inventory_fee) as fba_inventory_fee,
+            SUM(fba_reimbursement) as fba_reimbursement,
+            SUM(liquidations) as liquidations,
+            SUM(net_sales) as net_sales,
+            SUM(net_sales_with_tax) as net_sales_with_tax,
+            SUM(marketplace_withheld_tax) as marketplace_withheld_tax,
+            SUM(other_marketing_expenses) as other_marketing_expenses,
+            SUM(storage_fee) as storage_fee,
+            SUM(total_return_with_tax) as total_return_with_tax,
+            SUM(total_sales) as total_sales,
+            SUM(total_sales_with_tax) as total_sales_with_tax,
+            SUM(total_units) as total_units,
+            SUM(total_return_amount) as total_return_amount,
+            SUM(fba_fees) as fba_fees,
+            SUM(promotional_rebates) as promotional_rebates,
+            SUM(quantity) as quantity,
+            SUM(refund_quantity) as refund_quantity,
+            SUM(selling_fees) as selling_fees,
+            SUM(spend) as spend,
+            SUM(product_cogs) as product_cogs,
+            SUM(cogs) as cogs,
+            SUM(cm1) as cm1,
+            SUM(heads_cm2) as heads_cm2,
+            SUM(cm2) as cm2,
+            SUM(heads_cm3) as heads_cm3,
+            SUM(cm3) as cm3
+          FROM std_pnl
+          WHERE ${whereClause}
+        `;
+      }
 
       const result = await request.query(query);
       return result.recordset[0] || {};
