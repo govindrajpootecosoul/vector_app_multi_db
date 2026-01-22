@@ -4,6 +4,8 @@
  */
 
 const agentService = require('../services/agent.service');
+const streamingAgent = require('../services/streamingAgent.service');
+const chatHistory = require('../services/chatHistory.service');
 
 /**
  * Process natural language query
@@ -270,6 +272,153 @@ exports.checkHealth = async (req, res) => {
 
   } catch (error) {
     console.error('Health check error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Streaming chat endpoint (SSE)
+ * POST /api/agent/chat/stream
+ */
+exports.chatStream = async (req, res, next) => {
+  await streamingAgent.chatStream(req, res, next);
+};
+
+/**
+ * Get chat sessions for user
+ * GET /api/agent/chat/sessions
+ */
+exports.getSessions = async (req, res) => {
+  try {
+    const userId = req.user?.databaseName || req.user?.userId || 'anonymous';
+    const sessions = chatHistory.getUserSessions(userId);
+    
+    res.json({
+      success: true,
+      message: 'Sessions retrieved successfully',
+      data: sessions.map(session => ({
+        id: session.id,
+        title: session.title,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        messageCount: session.messages.length
+      }))
+    });
+  } catch (error) {
+    console.error('Error getting sessions:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get chat history for a session
+ * GET /api/agent/chat/sessions/:sessionId
+ */
+exports.getSessionHistory = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user?.databaseName || req.user?.userId || 'anonymous';
+    
+    const session = chatHistory.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+
+    if (session.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Session history retrieved successfully',
+      data: {
+        id: session.id,
+        title: session.title,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        messages: session.messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Error getting session history:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Delete a chat session
+ * DELETE /api/agent/chat/sessions/:sessionId
+ */
+exports.deleteSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user?.databaseName || req.user?.userId || 'anonymous';
+    
+    const session = chatHistory.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+
+    if (session.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    const deleted = chatHistory.deleteSession(sessionId);
+    
+    res.json({
+      success: true,
+      message: 'Session deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Clear all sessions for user
+ * DELETE /api/agent/chat/sessions
+ */
+exports.clearSessions = async (req, res) => {
+  try {
+    const userId = req.user?.databaseName || req.user?.userId || 'anonymous';
+    const deleted = chatHistory.clearUserSessions(userId);
+    
+    res.json({
+      success: true,
+      message: `Cleared ${deleted} sessions`,
+      data: { deleted }
+    });
+  } catch (error) {
+    console.error('Error clearing sessions:', error);
     res.status(500).json({
       success: false,
       error: error.message
